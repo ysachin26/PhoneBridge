@@ -113,26 +113,21 @@ def get_available_drive_letters() -> list[str]:
         return []
 
     import string
-    used = set()
-    # Use subprocess to get used drive letters
     try:
-        result = subprocess.run(
-            ["wmic", "logicaldisk", "get", "caption"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
-            if len(line) >= 2 and line[1] == ":":
-                used.add(line[0].upper())
+        import ctypes
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        used = {chr(65 + i) for i in range(26) if bitmask & (1 << i)}
     except Exception:
-        # Fallback: assume C and D are used
-        used = {"C", "D"}
+        # Fallback if ctypes fails
+        import os
+        used = {letter for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")}
 
-    # Return available letters from E onwards (skip A, B which are floppy)
-    all_letters = list(string.ascii_uppercase)
-    available = [f"{letter}:" for letter in all_letters if letter not in used and letter not in ("A", "B")]
+    # Return available letters from Z down to E (skip A, B, C, D to be safe)
+    available = []
+    for letter in reversed(string.ascii_uppercase):
+        if letter not in used and letter not in ("A", "B", "C", "D"):
+            available.append(f"{letter}:")
+            
     return available
 
 

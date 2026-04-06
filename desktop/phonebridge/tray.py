@@ -168,6 +168,16 @@ class TrayIcon:
 
     def _build_menu(self) -> Menu:
         """Build the right-click context menu."""
+        
+        def make_unmount(did):
+            return lambda icon, item: self._unmount_phone(did)
+            
+        def make_mount(p):
+            return lambda icon, item: self._mount_phone(p)
+            
+        def make_explorer(dl):
+            return lambda icon, item: self._open_explorer(dl)
+
         items = []
 
         # Header
@@ -185,15 +195,14 @@ class TrayIcon:
 
                 if is_mounted and mount_info:
                     label = f"📱 {phone.display_name} → {mount_info.drive_letter}"
-                    action = lambda _, did=device_id: self._unmount_phone(did)
                     submenu = Menu(
                         MenuItem(f"Drive: {mount_info.drive_letter}", None, enabled=False),
                         MenuItem(f"IP: {phone.ip_address}:{phone.port}", None, enabled=False),
                         Menu.SEPARATOR,
-                        MenuItem("Unmount", lambda _, did=device_id: self._unmount_phone(did)),
+                        MenuItem("Unmount", make_unmount(device_id)),
                         MenuItem(
                             "Open in Explorer",
-                            lambda _, dl=mount_info.drive_letter: self._open_explorer(dl),
+                            make_explorer(mount_info.drive_letter),
                         ),
                     )
                 else:
@@ -202,7 +211,7 @@ class TrayIcon:
                         MenuItem(f"IP: {phone.ip_address}:{phone.port}", None, enabled=False),
                         MenuItem(f"Model: {phone.device_model}", None, enabled=False),
                         Menu.SEPARATOR,
-                        MenuItem("Mount as Drive", lambda _, p=phone: self._mount_phone(p)),
+                        MenuItem("Mount as Drive", make_mount(phone)),
                     )
 
                 items.append(MenuItem(label, submenu))

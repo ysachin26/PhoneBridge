@@ -4,7 +4,6 @@ PhoneBridge — rclone Mount Manager
 Manages mounting and unmounting of phone WebDAV servers as Windows drive letters
 using rclone subprocess calls.
 """
-
 import logging
 import subprocess
 import threading
