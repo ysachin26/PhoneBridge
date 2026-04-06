@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="desktop/assets/icon.png" alt="PhoneBridge Logo" width="128" height="128">
-</p>
+ 
 
 <h1 align="center">PhoneBridge</h1>
 <p align="center">
