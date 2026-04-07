@@ -64,8 +64,8 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="40dp"
-            android:layout_marginBottom="16dp">
+            android:layout_marginTop="48dp"
+            android:layout_marginBottom="20dp">
 
             <LinearLayout
                 android:layout_width="wrap_content"
@@ -74,36 +74,50 @@
                 android:orientation="vertical"
                 android:gravity="center">
 
-                <!-- Glow ring (invisible placeholder) -->
-                <View
-                    android:id="@+id/viewGlowRing"
-                    android:layout_width="0dp"
-                    android:layout_height="0dp"
-                    android:visibility="gone" />
+                <!-- Toggle container with glow -->
+                <FrameLayout
+                    android:layout_width="120dp"
+                    android:layout_height="120dp">
 
-                <ImageButton
-                    android:id="@+id/btnToggle"
-                    android:layout_width="96dp"
-                    android:layout_height="96dp"
-                    android:background="@drawable/bg_toggle_inactive"
-                    android:src="@android:drawable/ic_media_play"
-                    android:scaleType="center"
-                    android:padding="26dp"
-                    android:contentDescription="Toggle Server"
-                    app:tint="@color/text_muted"
-                    android:elevation="2dp" />
+                    <!-- Glow ring (behind button, visible when active) -->
+                    <View
+                        android:id="@+id/viewGlowRing"
+                        android:layout_width="120dp"
+                        android:layout_height="120dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/bg_glow_ring"
+                        android:visibility="gone" />
 
+                    <!-- Main toggle button -->
+                    <ImageButton
+                        android:id="@+id/btnToggle"
+                        android:layout_width="88dp"
+                        android:layout_height="88dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/bg_toggle_inactive"
+                        android:src="@drawable/ic_power"
+                        android:scaleType="centerInside"
+                        android:padding="22dp"
+                        android:contentDescription="Toggle Server"
+                        app:tint="@color/text_muted"
+                        android:elevation="4dp" />
+
+                </FrameLayout>
+
+                <!-- Status text -->
                 <TextView
                     android:id="@+id/tvStatus"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Tap to start"
-                    android:textSize="14sp"
+                    android:textSize="15sp"
                     android:textColor="@color/text_muted"
+                    android:fontFamily="sans-serif-medium"
                     android:layout_marginTop="16dp" />
 
             </LinearLayout>
         </FrameLayout>
+
 
         <!-- ═══ Connection Card ═══ -->
         <LinearLayout

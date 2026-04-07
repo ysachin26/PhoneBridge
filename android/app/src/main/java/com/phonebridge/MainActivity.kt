@@ -189,11 +189,13 @@ class MainActivity : AppCompatActivity() {
         isServerRunning = running
         runOnUiThread {
             if (running) {
-                // Toggle → green with pulse
+                // Toggle → green with pulse + glow ring
                 binding.btnToggle.setBackgroundResource(R.drawable.bg_toggle_active)
-                binding.btnToggle.setImageResource(android.R.drawable.ic_media_pause)
+                binding.btnToggle.setImageResource(R.drawable.ic_stop)
                 binding.btnToggle.imageTintList = android.content.res.ColorStateList.valueOf(0xFFFFFFFF.toInt())
                 binding.btnToggle.startAnimation(pulseAnimation)
+                binding.viewGlowRing.visibility = View.VISIBLE
+                binding.viewGlowRing.startAnimation(pulseAnimation)
 
                 binding.tvStatus.text = "Running"
                 binding.tvStatus.setTextColor(ContextCompat.getColor(this, R.color.active_green))
@@ -209,10 +211,12 @@ class MainActivity : AppCompatActivity() {
                 binding.tvProtocolBadge.text = securedLabel
                 binding.tvPassword.text = password
             } else {
-                // Toggle → grey, no animation
+                // Toggle → grey, no animation, no glow
                 binding.btnToggle.clearAnimation()
+                binding.viewGlowRing.clearAnimation()
+                binding.viewGlowRing.visibility = View.GONE
                 binding.btnToggle.setBackgroundResource(R.drawable.bg_toggle_inactive)
-                binding.btnToggle.setImageResource(android.R.drawable.ic_media_play)
+                binding.btnToggle.setImageResource(R.drawable.ic_power)
                 binding.btnToggle.imageTintList = android.content.res.ColorStateList.valueOf(
                     ContextCompat.getColor(this, R.color.text_muted)
                 )
