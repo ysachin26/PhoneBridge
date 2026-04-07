@@ -166,10 +166,6 @@ def main():
         # Full mode: GUI + tray
         app = PhoneBridgeApp(scanner, mounter, config)
 
-        # Wire up scanner callbacks
-        scanner._on_found = lambda phone: None  # GUI polls, no callback needed
-        scanner._on_lost = lambda did: None
-
         # Start tray in background (with reference to GUI for "Open" action)
         tray = TrayIcon(scanner, mounter, config, gui=app)
         tray_thread = threading.Thread(target=tray.start, daemon=True)

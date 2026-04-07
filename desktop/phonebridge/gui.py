@@ -73,7 +73,7 @@ class DeviceCard(ctk.CTkFrame):
 
         name_label = ctk.CTkLabel(
             top_frame,
-            text=f"📱  {self.phone.display_name}",
+            text=self.phone.display_name,
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=COLOR_TEXT,
             anchor="w",
@@ -81,10 +81,12 @@ class DeviceCard(ctk.CTkFrame):
         name_label.pack(side="left")
 
         if is_mounted:
-            badge_text = f"✓ Mounted ({self.mount_info.drive_letter})"
+            badge_text = f"Mounted ({self.mount_info.drive_letter})"
+            badge_fg = "#122a1a"
             badge_color = COLOR_GREEN
         else:
             badge_text = "Discovered"
+            badge_fg = "#2a2008"
             badge_color = COLOR_ORANGE
 
         badge = ctk.CTkLabel(
@@ -92,7 +94,7 @@ class DeviceCard(ctk.CTkFrame):
             text=badge_text,
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color=badge_color,
-            fg_color=f"{badge_color}20",
+            fg_color=badge_fg,
             corner_radius=12,
             padx=10,
             pady=2,
@@ -104,16 +106,16 @@ class DeviceCard(ctk.CTkFrame):
         details_frame.pack(fill="x", padx=pad, pady=(0, 8))
 
         details = [
-            f"🌐 {self.phone.ip_address}:{self.phone.port}",
-            f"🔐 {self.phone.protocol.upper()}",
-            f"{'🔒 Auth' if self.phone.auth_required else '🔓 Open'}",
+            f"IP: {self.phone.ip_address}:{self.phone.port}",
+            self.phone.protocol.upper(),
+            "Auth Required" if self.phone.auth_required else "Open",
         ]
         if hasattr(self.phone, 'device_model') and self.phone.device_model:
-            details.append(f"📋 {self.phone.device_model}")
+            details.append(self.phone.device_model)
         if is_mounted:
-            details.append(f"💾 Drive {self.mount_info.drive_letter}")
+            details.append(f"Drive {self.mount_info.drive_letter}")
 
-        detail_text = "   •   ".join(details)
+        detail_text = "  |  ".join(details)
         detail_label = ctk.CTkLabel(
             details_frame,
             text=detail_text,
@@ -129,7 +131,7 @@ class DeviceCard(ctk.CTkFrame):
 
         if is_mounted:
             ctk.CTkButton(
-                btn_frame, text="📂 Open Explorer", width=130,
+                btn_frame, text="Open Explorer", width=130,
                 fg_color="#1a3a2a", hover_color="#2ea043",
                 border_color="#2ea043", border_width=1,
                 font=ctk.CTkFont(size=13),
@@ -137,7 +139,7 @@ class DeviceCard(ctk.CTkFrame):
             ).pack(side="left", padx=(0, 8))
 
             ctk.CTkButton(
-                btn_frame, text="⏏ Unmount", width=110,
+                btn_frame, text="Unmount", width=110,
                 fg_color="#3a1a1a", hover_color="#da3633",
                 border_color="#da3633", border_width=1,
                 font=ctk.CTkFont(size=13),
@@ -145,7 +147,7 @@ class DeviceCard(ctk.CTkFrame):
             ).pack(side="left", padx=(0, 8))
 
             ctk.CTkButton(
-                btn_frame, text="🔑 Change Password", width=150,
+                btn_frame, text="Change Password", width=150,
                 fg_color="transparent", hover_color="#30363d",
                 border_color=COLOR_CARD_BORDER, border_width=1,
                 font=ctk.CTkFont(size=13),
@@ -154,14 +156,14 @@ class DeviceCard(ctk.CTkFrame):
         else:
             if self.phone.auth_required:
                 ctk.CTkButton(
-                    btn_frame, text="🔑 Enter Code & Mount", width=180,
+                    btn_frame, text="Enter Code & Mount", width=180,
                     fg_color=COLOR_ACCENT, hover_color="#818cf8",
                     font=ctk.CTkFont(size=13, weight="bold"),
                     command=lambda: self._on_mount(self.phone),
                 ).pack(side="left")
             else:
                 ctk.CTkButton(
-                    btn_frame, text="💾 Mount Drive", width=140,
+                    btn_frame, text="Mount Drive", width=140,
                     fg_color=COLOR_ACCENT, hover_color="#818cf8",
                     font=ctk.CTkFont(size=13, weight="bold"),
                     command=lambda: self._on_mount(self.phone),
@@ -444,17 +446,29 @@ class PhoneBridgeApp(ctk.CTk):
 
         # Create device cards
         for device_id, phone in phones.items():
-            mount = mounts.get(device_id)
-            card = DeviceCard(
-                self.device_scroll,
-                phone=phone,
-                mount_info=mount,
-                on_mount=self._handle_mount,
-                on_unmount=self._handle_unmount,
-                on_explorer=self._handle_explorer,
-                on_change_pass=self._handle_change_pass,
-            )
-            card.pack(fill="x", pady=(0, 10))
+            try:
+                mount = mounts.get(device_id)
+                card = DeviceCard(
+                    self.device_scroll,
+                    phone=phone,
+                    mount_info=mount,
+                    on_mount=self._handle_mount,
+                    on_unmount=self._handle_unmount,
+                    on_explorer=self._handle_explorer,
+                    on_change_pass=self._handle_change_pass,
+                )
+                card.pack(fill="x", pady=(0, 10))
+            except Exception as e:
+                logger.error(f"Failed to render card for {phone.display_name}: {e}")
+                # Fallback: show a simple label
+                fallback = ctk.CTkLabel(
+                    self.device_scroll,
+                    text=f"  {phone.display_name} — {phone.ip_address}:{phone.port}",
+                    font=ctk.CTkFont(size=14),
+                    text_color=COLOR_TEXT,
+                    anchor="w",
+                )
+                fallback.pack(fill="x", pady=4)
 
     # ─── Actions ──────────────────────────────────────────────
 
