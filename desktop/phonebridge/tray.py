@@ -110,6 +110,7 @@ class TrayIcon:
         self.mounter._on_mount = self._on_mounted
         self.mounter._on_unmount = self._on_unmounted
         self.mounter._on_error = self._on_mount_error
+        self.mounter._on_auth_failed = self._handle_auth_failure
 
     def start(self):
         """Create and run the system tray icon (blocking)."""
@@ -384,8 +385,15 @@ class TrayIcon:
                         phone_config.auth_password = ""
                         self.config.upsert_phone(phone_config)
                         auth_password = ""
-                    except MountError:
-                        pass  # Network issue — let rclone try anyway
+                    except MountError as e:
+                        # Server is unreachable — abort mount entirely
+                        logger.warning(f"Server not reachable for {phone.display_name}: {e}")
+                        self._notify(
+                            "Server Not Running",
+                            f"{phone.display_name}'s server is not responding.\n"
+                            f"Start PhoneBridge on your phone first.",
+                        )
+                        return
 
                 if not auth_password:
                     # Prompt for password (first time or after password change)
@@ -407,8 +415,13 @@ class TrayIcon:
                             f"Check the code displayed on {phone.display_name}.",
                         )
                         return
-                    except MountError:
-                        pass  # Network issue — let rclone try anyway
+                    except MountError as e:
+                        logger.warning(f"Server not reachable for {phone.display_name}: {e}")
+                        self._notify(
+                            "Server Not Running",
+                            f"{phone.display_name}'s server is not responding.",
+                        )
+                        return
 
             mount_info = self.mounter.mount(
                 phone, drive_letter,
@@ -496,6 +509,13 @@ class TrayIcon:
         if phone_config and phone_config.auto_mount:
             # Only auto-mount if we have saved credentials (or no auth required)
             if not phone.auth_required or phone_config.auth_password:
+                # First verify the server is actually responding
+                if not self.mounter.is_server_reachable(phone.webdav_url):
+                    logger.info(
+                        f"Skipping auto-mount for {phone.display_name} — "
+                        f"server not responding (phone app may be off)"
+                    )
+                    return
                 logger.info(f"Auto-mounting {phone.display_name}...")
                 threading.Thread(
                     target=self._mount_phone,

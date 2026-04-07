@@ -348,10 +348,11 @@ class PhoneBridgeService : Service() {
 
     private fun generateNewPassword(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
-        val password = (1..8).map { chars.random() }.joinToString("")
+        val secureRandom = java.security.SecureRandom()
+        val password = (1..8).map { chars[secureRandom.nextInt(chars.length)] }.joinToString("")
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(PREF_AUTH_PASSWORD, password).apply()
-        Log.i(TAG, "Generated new auth password")
+        Log.i(TAG, "Generated new auth password (SecureRandom)")
         return password
     }
 

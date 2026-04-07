@@ -161,9 +161,25 @@ class MountManager:
         except urllib.error.URLError as e:
             raise MountError(f"Cannot reach phone: {e.reason}")
         except Exception as e:
-            # Don't block mount for probe failures — let rclone try
-            logger.warning(f"Auth pre-check failed (non-fatal): {e}")
+            raise MountError(f"Connection check failed: {e}")
+
+    def is_server_reachable(self, webdav_url: str) -> bool:
+        """
+        Quick check if the WebDAV server is actually running and reachable.
+        Returns True if server responds, False otherwise.
+        """
+        try:
+            req = urllib.request.Request(webdav_url, method="OPTIONS")
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, timeout=3, context=ctx) as resp:
+                return True
+        except urllib.error.HTTPError:
+            # Server responded (even if 401) — it's running
             return True
+        except Exception:
+            return False
 
     def _obscure_password(self, password: str) -> str:
         """
@@ -223,7 +239,7 @@ class MountManager:
                 "rclone is not installed. Download from https://rclone.org/downloads/"
             )
 
-        # Check if already mounted
+        # Check if already mounted (by device_id)
         with self._lock:
             if phone.device_id in self._mounts:
                 existing = self._mounts[phone.device_id]
@@ -233,6 +249,22 @@ class MountManager:
                 else:
                     # Stale mount — clean up
                     self._cleanup_mount(phone.device_id)
+
+            # Also check by IP/URL — prevents double mounts from mDNS name collisions
+            for did, m in self._mounts.items():
+                if m.webdav_url == phone.webdav_url and m.is_alive:
+                    logger.warning(
+                        f"Phone at {phone.webdav_url} already mounted as {m.drive_letter} "
+                        f"(device_id={did}), skipping duplicate mount"
+                    )
+                    return m
+
+        # Verify server is actually running before starting rclone
+        if not self.is_server_reachable(phone.webdav_url):
+            raise MountError(
+                f"Server on {phone.display_name} is not reachable. "
+                f"Make sure PhoneBridge is running on your phone."
+            )
 
         # Check if drive letter is already in use
         with self._lock:
