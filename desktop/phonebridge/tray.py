@@ -93,10 +93,12 @@ class TrayIcon:
         scanner: PhoneScanner,
         mounter: MountManager,
         config: ConfigManager,
+        gui=None,
     ):
         self.scanner = scanner
         self.mounter = mounter
         self.config = config
+        self._gui = gui
 
         self._icon: Optional[pystray.Icon] = None
         self._discovered: dict[str, DiscoveredPhone] = {}
@@ -123,11 +125,10 @@ class TrayIcon:
             menu=self._build_menu(),
         )
 
-        # Start scanner in background
-        threading.Thread(target=self._start_scanner, daemon=True).start()
-
-        # Start health monitor
-        self.mounter.start_health_monitor()
+        # When running standalone (no GUI), start scanner/mounter here
+        if not self._gui:
+            threading.Thread(target=self._start_scanner, daemon=True).start()
+            self.mounter.start_health_monitor()
 
         # Run icon (blocks until stop)
         self._icon.run()
@@ -311,12 +312,20 @@ class TrayIcon:
 
         items.append(Menu.SEPARATOR)
 
+        # Open GUI window
+        if self._gui:
+            items.insert(0, MenuItem(
+                "📱 Open PhoneBridge",
+                lambda: self._open_gui(),
+            ))
+            items.insert(1, Menu.SEPARATOR)
+
         items.append(MenuItem(
             "📖 GitHub",
             lambda: webbrowser.open("https://github.com/ysachin26/PhoneBridge"),
         ))
 
-        items.append(MenuItem("Quit", lambda: self.stop()))
+        items.append(MenuItem("Quit", lambda: self._quit()))
 
         return Menu(*items)
 
@@ -339,6 +348,18 @@ class TrayIcon:
             else:
                 self._icon.icon = self._create_icon(self.COLOR_SCANNING)
                 self._icon.title = "PhoneBridge — Scanning..."
+
+    def _open_gui(self):
+        """Show the GUI window."""
+        if self._gui:
+            self._gui.after(0, self._gui.show_window)
+
+    def _quit(self):
+        """Fully quit the application (tray + GUI)."""
+        self.stop()
+        # Force exit the process (pywebview may block otherwise)
+        import os
+        os._exit(0)
 
     # ─── Actions ───────────────────────────────────────────────────
 

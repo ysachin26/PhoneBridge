@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhoneBridge</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header id="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="logo-icon">📱</div>
+                <div>
+                    <h1>PhoneBridge</h1>
+                    <span class="version" id="app-version">v1.0.0</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <button class="btn btn-ghost" id="btn-rescan" title="Rescan Network">
+                <span class="btn-icon">🔄</span> Rescan
+            </button>
+            <button class="btn btn-ghost" id="btn-settings" title="Settings">
+                <span class="btn-icon">⚙️</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Status Bar -->
+    <div id="status-bar">
+        <div class="status-item">
+            <span class="status-dot" id="scan-dot"></span>
+            <span id="scan-status">Scanning...</span>
+        </div>
+        <div class="status-item">
+            <span class="status-icon">📱</span>
+            <span id="device-count">0 devices</span>
+        </div>
+        <div class="status-item">
+            <span class="status-icon">💾</span>
+            <span id="mount-count">0 mounted</span>
+        </div>
+        <div class="status-item deps" id="deps-status">
+            <span class="status-icon">📦</span>
+            <span id="deps-text">Checking dependencies...</span>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main id="main-content">
+        <!-- Devices Section -->
+        <section id="devices-section">
+            <div class="section-header">
+                <h2>Discovered Devices</h2>
+            </div>
+            <div id="devices-list">
+                <div class="empty-state" id="empty-state">
+                    <div class="empty-icon">📡</div>
+                    <p>Scanning for phones on your network...</p>
+                    <p class="empty-hint">Make sure PhoneBridge is running on your Android device</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Settings Panel (hidden by default) -->
+    <div id="settings-panel" class="panel hidden">
+        <div class="panel-overlay" id="settings-overlay"></div>
+        <div class="panel-content">
+            <div class="panel-header">
+                <h2>Settings</h2>
+                <button class="btn btn-ghost btn-close" id="btn-close-settings">✕</button>
+            </div>
+            <div class="panel-body">
+                <div class="setting-group">
+                    <h3>Startup</h3>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <span class="setting-label">Start with Windows</span>
+                            <span class="setting-desc">Launch PhoneBridge when you log in</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-startup">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <span class="setting-label">Show Notifications</span>
+                            <span class="setting-desc">Display toast alerts for events</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-notifications" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <h3>Mount Options</h3>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <span class="setting-label">VFS Cache Mode</span>
+                            <span class="setting-desc">How rclone caches files locally</span>
+                        </div>
+                        <select id="select-cache-mode" class="select">
+                            <option value="off">Off</option>
+                            <option value="minimal">Minimal</option>
+                            <option value="writes">Writes</option>
+                            <option value="full" selected>Full</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <h3>Dependencies</h3>
+                    <div class="dep-row" id="dep-rclone">
+                        <span class="dep-icon">⏳</span>
+                        <span class="dep-name">rclone</span>
+                        <span class="dep-status">Checking...</span>
+                    </div>
+                    <div class="dep-row" id="dep-winfsp">
+                        <span class="dep-icon">⏳</span>
+                        <span class="dep-name">WinFsp</span>
+                        <span class="dep-status">Checking...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Password Modal -->
+    <div id="password-modal" class="modal hidden">
+        <div class="modal-overlay" id="password-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔑 Enter Connection Code</h2>
+            </div>
+            <div class="modal-body">
+                <p id="password-prompt">Enter the password displayed on your phone.</p>
+                <div class="input-group">
+                    <input type="text" id="password-input" class="input" placeholder="Connection code" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="modal-error hidden" id="password-error">
+                    Incorrect password. Check the code on your phone.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" id="btn-password-cancel">Cancel</button>
+                <button class="btn btn-primary" id="btn-password-submit">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -11,16 +11,15 @@ import sys
 import os
 
 def main():
-    # Ensure we're in the desktop directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
 
     # Install PyInstaller if needed
     try:
         import PyInstaller
-        print(f"✅ PyInstaller {PyInstaller.__version__} found")
+        print(f"PyInstaller {PyInstaller.__version__} found")
     except ImportError:
-        print("📦 Installing PyInstaller...")
+        print("Installing PyInstaller...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
     # Build command
@@ -30,7 +29,7 @@ def main():
         "--noconsole",
         "--name=PhoneBridge",
         "--clean",
-        # Hidden imports that PyInstaller sometimes misses
+        # Hidden imports
         "--hidden-import=zeroconf",
         "--hidden-import=zeroconf._utils",
         "--hidden-import=zeroconf._handlers",
@@ -45,14 +44,17 @@ def main():
         "--hidden-import=PIL.Image",
         "--hidden-import=PIL.ImageDraw",
         "--hidden-import=PIL.ImageFont",
-        # Collect all zeroconf data files
+        "--hidden-import=customtkinter",
+        "--hidden-import=darkdetect",
+        # Collect all customtkinter assets (themes, etc)
+        "--collect-all=customtkinter",
         "--collect-all=zeroconf",
         # Entry point
         "run_phonebridge.py",
     ]
 
-    print("\n🔨 Building PhoneBridge.exe...")
-    print(f"   Command: {' '.join(cmd)}\n")
+    print("\nBuilding PhoneBridge.exe...")
+    print(f"  Command: {' '.join(cmd)}\n")
 
     result = subprocess.run(cmd)
 
@@ -60,13 +62,13 @@ def main():
         exe_path = os.path.join(script_dir, "dist", "PhoneBridge.exe")
         if os.path.exists(exe_path):
             size_mb = os.path.getsize(exe_path) / (1024 * 1024)
-            print(f"\n✅ Build successful!")
-            print(f"   Output: {exe_path}")
-            print(f"   Size:   {size_mb:.1f} MB")
+            print(f"\nBuild successful!")
+            print(f"  Output: {exe_path}")
+            print(f"  Size:   {size_mb:.1f} MB")
         else:
-            print("\n⚠️ Build completed but exe not found at expected path")
+            print("\nBuild completed but exe not found")
     else:
-        print(f"\n❌ Build failed with exit code {result.returncode}")
+        print(f"\nBuild failed with exit code {result.returncode}")
         sys.exit(1)
 
 
