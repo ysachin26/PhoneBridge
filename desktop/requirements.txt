@@ -1,3 +1,4 @@
 pystray>=0.2.8
 Pillow>=10.0.0
 zeroconf>=0.131.0
+pyinstaller>=6.0.0

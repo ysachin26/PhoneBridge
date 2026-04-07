@@ -5,8 +5,11 @@ Starts the system tray application with mDNS discovery and rclone mounting.
 """
 
 import sys
+import os
 import argparse
 import logging
+import ctypes
+import ctypes.wintypes
 
 from . import __version__, __app_name__
 from .utils import setup_logging, check_rclone, check_winfsp
@@ -16,8 +19,52 @@ from .mounter import MountManager
 from .tray import TrayIcon
 
 
+# ─── Single Instance Lock ────────────────────────────────────────────
+
+_MUTEX_NAME = "PhoneBridge_SingleInstance_Mutex"
+_mutex_handle = None
+
+
+def _acquire_single_instance() -> bool:
+    """
+    Ensure only one instance of PhoneBridge runs at a time.
+    Uses a Windows named mutex.
+    Returns True if this is the first instance, False if another is already running.
+    """
+    global _mutex_handle
+    if sys.platform != "win32":
+        return True
+
+    try:
+        _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+        last_error = ctypes.windll.kernel32.GetLastError()
+        # ERROR_ALREADY_EXISTS = 183
+        if last_error == 183:
+            ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
+            return False
+        return True
+    except Exception:
+        return True
+
+
+def _release_single_instance():
+    """Release the single-instance mutex."""
+    global _mutex_handle
+    if _mutex_handle:
+        try:
+            ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+        except Exception:
+            pass
+        _mutex_handle = None
+
+
+# ─── Banner ──────────────────────────────────────────────────────────
+
 def print_banner():
-    """Print startup banner."""
+    """Print startup banner (only in terminal mode)."""
+    if getattr(sys, "frozen", False):
+        return  # Don't print banner in compiled exe (no console)
     print(r"""
     ╔═══════════════════════════════════════════╗
     ║                                           ║
@@ -29,6 +76,8 @@ def print_banner():
     ╚═══════════════════════════════════════════╝
     """.format(__version__))
 
+
+# ─── System Checks ───────────────────────────────────────────────────
 
 def check_system(logger: logging.Logger) -> bool:
     """Pre-flight system checks."""
@@ -57,8 +106,30 @@ def check_system(logger: logging.Logger) -> bool:
     return all_ok
 
 
+def _show_already_running_message():
+    """Show a Windows message box telling the user PhoneBridge is already running."""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "PhoneBridge is already running in the system tray.\n\n"
+                "Look for the 📱 icon in your taskbar notification area.",
+                "PhoneBridge",
+                0x40,  # MB_ICONINFORMATION
+            )
+        except Exception:
+            pass
+
+
+# ─── Main ────────────────────────────────────────────────────────────
+
 def main():
     """Main entry point."""
+    # Single instance check
+    if not _acquire_single_instance():
+        _show_already_running_message()
+        sys.exit(0)
+
     parser = argparse.ArgumentParser(
         prog="phonebridge",
         description="PhoneBridge — Mount phone storage as Windows drive letters",
@@ -125,6 +196,7 @@ def main():
             pass
         finally:
             tray.stop()
+            _release_single_instance()
             logger.info("PhoneBridge stopped. Goodbye!")
 
 
