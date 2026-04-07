@@ -31,10 +31,13 @@ object TlsHelper {
     private const val KEYSTORE_PASSWORD = "phonebridge-internal"
 
     init {
-        // Register Bouncy Castle as a security provider
-        if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-            Security.addProvider(BouncyCastleProvider())
-        }
+        // Android ships a stripped-down BouncyCastle provider that shadows ours.
+        // Remove it first, then add the full version from our dependency.
+        try {
+            Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
+        } catch (_: Exception) {}
+        Security.addProvider(BouncyCastleProvider())
+        Log.d(TAG, "Bouncy Castle provider registered: ${BouncyCastleProvider.PROVIDER_NAME}")
     }
 
     /**

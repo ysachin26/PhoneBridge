@@ -14,6 +14,8 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.view.View
+import android.view.animation.AnimationUtils
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -22,18 +24,23 @@ import com.phonebridge.databinding.ActivityMainBinding
 import com.phonebridge.receiver.BootReceiver
 import com.phonebridge.service.PhoneBridgeService
 
-/**
- * Main activity with a simple toggle to start/stop the PhoneBridge server.
- * Displays connection password and provides settings for auto-start on boot.
- */
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 100
+        private const val PREFS_NAME = "phonebridge_prefs"
+        private const val PREF_SHARED_FOLDER = "shared_folder"
+
+        const val FOLDER_ALL = "all"
+        const val FOLDER_DCIM = "dcim"
+        const val FOLDER_DOWNLOADS = "downloads"
+        const val FOLDER_MUSIC = "music"
     }
 
     private lateinit var binding: ActivityMainBinding
     private var isServerRunning = false
+    private var pulseAnimation: android.view.animation.Animation? = null
+    private val chipMap = mutableMapOf<String, TextView>()
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -43,7 +50,17 @@ class MainActivity : AppCompatActivity() {
                 val port = intent.getIntExtra(PhoneBridgeService.EXTRA_PORT, 8273)
                 val password = intent.getStringExtra(PhoneBridgeService.EXTRA_PASSWORD) ?: ""
                 val protocol = intent.getStringExtra(PhoneBridgeService.EXTRA_PROTOCOL) ?: "http"
+                val bytesServed = intent.getLongExtra(PhoneBridgeService.EXTRA_BYTES_SERVED, 0)
+                val bytesReceived = intent.getLongExtra(PhoneBridgeService.EXTRA_BYTES_RECEIVED, 0)
+                val totalRequests = intent.getLongExtra(PhoneBridgeService.EXTRA_TOTAL_REQUESTS, 0)
+                val activeConnections = intent.getIntExtra(PhoneBridgeService.EXTRA_ACTIVE_CONNECTIONS, 0)
+                val uptimeSeconds = intent.getLongExtra(PhoneBridgeService.EXTRA_UPTIME_SECONDS, 0)
+                val storageTotal = intent.getLongExtra(PhoneBridgeService.EXTRA_STORAGE_TOTAL, 0)
+                val storageUsed = intent.getLongExtra(PhoneBridgeService.EXTRA_STORAGE_USED, 0)
+
                 updateUI(running, ip, port, password, protocol)
+                updateStats(bytesServed, bytesReceived, totalRequests, activeConnections, uptimeSeconds)
+                updateStorage(storageTotal, storageUsed)
             }
         }
     }
@@ -53,8 +70,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        setupUI()
+        pulseAnimation = AnimationUtils.loadAnimation(this, R.anim.pulse)
+        setupToggle()
+        setupCopyPassword()
         setupAutoStartToggle()
+        setupFolderChips()
         checkPermissions()
     }
 
@@ -66,196 +86,233 @@ class MainActivity : AppCompatActivity() {
         } else {
             registerReceiver(statusReceiver, filter)
         }
-
-        // Request current status
-        val statusIntent = Intent(this, PhoneBridgeService::class.java).apply {
-            action = PhoneBridgeService.ACTION_STATUS
-        }
-        startService(statusIntent)
+        try {
+            startService(Intent(this, PhoneBridgeService::class.java).apply {
+                action = PhoneBridgeService.ACTION_STATUS
+            })
+        } catch (_: Exception) {}
     }
 
     override fun onPause() {
         super.onPause()
-        try {
-            unregisterReceiver(statusReceiver)
-        } catch (_: Exception) {}
+        try { unregisterReceiver(statusReceiver) } catch (_: Exception) {}
     }
 
-    private fun setupUI() {
+    // ─── Setup ─────────────────────────────────────────────
+
+    private fun setupToggle() {
         binding.btnToggle.setOnClickListener {
-            if (isServerRunning) {
-                stopPhoneBridge()
-            } else {
-                startPhoneBridge()
-            }
+            if (isServerRunning) stopPhoneBridge() else startPhoneBridge()
         }
+    }
 
-        // Copy password button
+    private fun setupCopyPassword() {
         binding.btnCopyPassword.setOnClickListener {
-            val password = binding.tvPassword.text.toString()
-            if (password.isNotBlank() && password != "--------") {
+            val pw = binding.tvPassword.text.toString()
+            if (pw.isNotBlank() && pw != "— — — —") {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("PhoneBridge Password", password)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(this, "Password copied to clipboard!", Toast.LENGTH_SHORT).show()
+                clipboard.setPrimaryClip(ClipData.newPlainText("PhoneBridge Password", pw))
+                Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
             }
         }
-
-        // Initial state
-        updateUI(false, "—", 0, "", "http")
     }
 
     private fun setupAutoStartToggle() {
         val prefs = getSharedPreferences(BootReceiver.PREFS_NAME, Context.MODE_PRIVATE)
-        val autoStartEnabled = prefs.getBoolean(BootReceiver.PREF_AUTO_START, false)
-        binding.switchAutoStart.isChecked = autoStartEnabled
+        binding.switchAutoStart.isChecked = prefs.getBoolean(BootReceiver.PREF_AUTO_START, false)
+        binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(BootReceiver.PREF_AUTO_START, checked).apply()
+        }
 
-        binding.switchAutoStart.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean(BootReceiver.PREF_AUTO_START, isChecked).apply()
-            val status = if (isChecked) "enabled" else "disabled"
-            Toast.makeText(this, "Auto-start on boot $status", Toast.LENGTH_SHORT).show()
+        // Info tooltip
+        binding.btnAutoStartInfo.setOnClickListener {
+            Toast.makeText(
+                this,
+                "Auto-start: Automatically start the server when your phone boots up",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
-    private fun startPhoneBridge() {
-        if (!hasAllPermissions()) {
-            requestPermissions()
-            return
-        }
+    private fun setupFolderChips() {
+        chipMap[FOLDER_ALL] = binding.chipAllStorage
+        chipMap[FOLDER_DCIM] = binding.chipDCIM
+        chipMap[FOLDER_DOWNLOADS] = binding.chipDownloads
+        chipMap[FOLDER_MUSIC] = binding.chipMusic
 
-        val intent = Intent(this, PhoneBridgeService::class.java).apply {
-            action = PhoneBridgeService.ACTION_START
-        }
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        selectChip(prefs.getString(PREF_SHARED_FOLDER, FOLDER_ALL) ?: FOLDER_ALL)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
-
-        Toast.makeText(this, "Starting PhoneBridge...", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun stopPhoneBridge() {
-        val intent = Intent(this, PhoneBridgeService::class.java).apply {
-            action = PhoneBridgeService.ACTION_STOP
-        }
-        startService(intent)
-    }
-
-    private fun updateUI(running: Boolean, ip: String, port: Int, password: String, protocol: String) {
-        isServerRunning = running
-
-        runOnUiThread {
-            if (running) {
-                binding.btnToggle.text = "Stop Server"
-                binding.btnToggle.setBackgroundColor(
-                    ContextCompat.getColor(this, android.R.color.holo_red_dark)
-                )
-                binding.tvStatus.text = "🟢 Server Running"
-
-                val tlsIndicator = if (protocol == "https") "🔒 " else ""
-                binding.tvAddress.text = "${tlsIndicator}$protocol://$ip:$port"
-
-                binding.tvInfo.text = "Your PC can now discover and mount this phone's storage.\n\nMake sure PhoneBridge is running on your PC."
-                binding.statusIndicator.setBackgroundColor(
-                    ContextCompat.getColor(this, android.R.color.holo_green_dark)
-                )
-
-                // Show password card
-                binding.cardPassword.visibility = View.VISIBLE
-                binding.tvPassword.text = password
-            } else {
-                binding.btnToggle.text = "Start Server"
-                binding.btnToggle.setBackgroundColor(
-                    ContextCompat.getColor(this, android.R.color.holo_green_dark)
-                )
-                binding.tvStatus.text = "⚪ Server Stopped"
-                binding.tvAddress.text = "—"
-                binding.tvInfo.text = "Tap 'Start Server' to share your phone's storage with your PC wirelessly."
-                binding.statusIndicator.setBackgroundColor(
-                    ContextCompat.getColor(this, android.R.color.darker_gray)
-                )
-
-                // Hide password card
-                binding.cardPassword.visibility = View.GONE
-                binding.tvPassword.text = "--------"
+        chipMap.forEach { (id, view) ->
+            view.setOnClickListener {
+                selectChip(id)
+                prefs.edit().putString(PREF_SHARED_FOLDER, id).apply()
+                if (isServerRunning) {
+                    Toast.makeText(this, "Restart to apply", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
 
-    // ─── Permissions ──────────────────────────────────────────
+    private fun selectChip(selectedId: String) {
+        chipMap.forEach { (id, chip) ->
+            if (id == selectedId) {
+                chip.setBackgroundResource(R.drawable.bg_chip_selected)
+                chip.setTextColor(ContextCompat.getColor(this, R.color.bg_card))
+            } else {
+                chip.setBackgroundResource(R.drawable.bg_chip)
+                chip.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            }
+        }
+    }
+
+    // ─── Service Control ───────────────────────────────────
+
+    private fun startPhoneBridge() {
+        if (!hasAllPermissions()) { requestPermissions(); return }
+        val intent = Intent(this, PhoneBridgeService::class.java).apply {
+            action = PhoneBridgeService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+        else startService(intent)
+    }
+
+    private fun stopPhoneBridge() {
+        startService(Intent(this, PhoneBridgeService::class.java).apply {
+            action = PhoneBridgeService.ACTION_STOP
+        })
+    }
+
+    // ─── UI Updates ────────────────────────────────────────
+
+    private fun updateUI(running: Boolean, ip: String, port: Int, password: String, protocol: String) {
+        isServerRunning = running
+        runOnUiThread {
+            if (running) {
+                // Toggle → green with pulse
+                binding.btnToggle.setBackgroundResource(R.drawable.bg_toggle_active)
+                binding.btnToggle.setImageResource(android.R.drawable.ic_media_pause)
+                binding.btnToggle.imageTintList = android.content.res.ColorStateList.valueOf(0xFFFFFFFF.toInt())
+                binding.btnToggle.startAnimation(pulseAnimation)
+
+                binding.tvStatus.text = "Running"
+                binding.tvStatus.setTextColor(ContextCompat.getColor(this, R.color.active_green))
+
+                // Show cards
+                binding.cardConnection.visibility = View.VISIBLE
+                binding.cardStats.visibility = View.VISIBLE
+                binding.cardStorage.visibility = View.VISIBLE
+                binding.tvInfo.visibility = View.GONE
+
+                binding.tvAddress.text = "$protocol://$ip:$port"
+                val securedLabel = if (protocol == "https") "Secured · HTTPS" else "HTTP"
+                binding.tvProtocolBadge.text = securedLabel
+                binding.tvPassword.text = password
+            } else {
+                // Toggle → grey, no animation
+                binding.btnToggle.clearAnimation()
+                binding.btnToggle.setBackgroundResource(R.drawable.bg_toggle_inactive)
+                binding.btnToggle.setImageResource(android.R.drawable.ic_media_play)
+                binding.btnToggle.imageTintList = android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(this, R.color.text_muted)
+                )
+
+                binding.tvStatus.text = "Tap to start"
+                binding.tvStatus.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
+
+                // Hide cards
+                binding.cardConnection.visibility = View.GONE
+                binding.cardStats.visibility = View.GONE
+                binding.cardStorage.visibility = View.GONE
+                binding.tvInfo.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun updateStats(bytesServed: Long, bytesReceived: Long, totalRequests: Long, connections: Int, uptime: Long) {
+        runOnUiThread {
+            binding.tvBytesServed.text = formatBytes(bytesServed)
+            binding.tvBytesReceived.text = formatBytes(bytesReceived)
+            binding.tvUptime.text = formatUptime(uptime)
+            binding.tvConnections.text = connections.toString()
+            binding.tvTotalRequests.text = "${formatNumber(totalRequests)} requests"
+        }
+    }
+
+    private fun updateStorage(total: Long, used: Long) {
+        if (total <= 0) return
+        runOnUiThread {
+            val pct = ((used.toDouble() / total) * 100).toInt().coerceIn(0, 100)
+            binding.progressStorage.progress = pct
+            binding.tvStoragePercent.text = "$pct%"
+            binding.tvStorageUsed.text = "Used: ${formatBytes(used)}"
+            binding.tvStorageTotal.text = "Total: ${formatBytes(total)}"
+        }
+    }
+
+    // ─── Formatting ────────────────────────────────────────
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> String.format("%.1f KB", bytes / 1024.0)
+        bytes < 1024 * 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024))
+        else -> String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024))
+    }
+
+    private fun formatUptime(s: Long) = String.format("%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+
+    private fun formatNumber(n: Long): String = when {
+        n >= 1_000_000 -> String.format("%.1fM", n / 1_000_000.0)
+        n >= 1_000 -> String.format("%.1fK", n / 1_000.0)
+        else -> n.toString()
+    }
+
+    // ─── Permissions ──────────────────────────────────────
 
     private fun hasAllPermissions(): Boolean {
-        // Check MANAGE_EXTERNAL_STORAGE for Android 11+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) return false
         } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED) return false
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED) return false
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) return false
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) return false
         }
-
-        // Check notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) return false
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
         }
-
         return true
     }
 
     private fun checkPermissions() {
         if (!hasAllPermissions()) {
-            binding.tvInfo.text = "⚠️ Storage and notification permissions are required.\nTap 'Start Server' to grant permissions."
+            binding.tvInfo.text = "Storage and notification permissions are needed.\nTap the button to grant them."
         }
     }
 
     private fun requestPermissions() {
-        val permissions = mutableListOf<String>()
-
+        val perms = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
-                // Need to open settings for MANAGE_EXTERNAL_STORAGE
                 try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                         data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
+                    })
                 } catch (_: Exception) {
-                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    startActivity(intent)
+                    startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
                 }
-                Toast.makeText(this, "Please grant 'All Files Access' permission", Toast.LENGTH_LONG).show()
                 return
             }
         } else {
-            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            perms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            perms.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        if (permissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (perms.isNotEmpty()) ActivityCompat.requestPermissions(this, perms.toTypedArray(), PERMISSION_REQUEST_CODE)
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                startPhoneBridge()
-            } else {
-                Toast.makeText(this, "Permissions required to share storage", Toast.LENGTH_LONG).show()
-            }
+        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            startPhoneBridge()
         }
     }
 }

@@ -354,8 +354,25 @@ class PhoneBridgeService : Service() {
     // ─── Helpers ───────────────────────────────────────────────
 
     private fun getStorageRoot(): File {
-        // Use the primary external storage root (sdcard)
-        return Environment.getExternalStorageDirectory()
+        val prefs = getSharedPreferences("phonebridge_prefs", Context.MODE_PRIVATE)
+        val folderPref = prefs.getString("shared_folder", "all") ?: "all"
+        val externalRoot = Environment.getExternalStorageDirectory()
+
+        val targetDir = when (folderPref) {
+            "dcim" -> File(externalRoot, "DCIM")
+            "downloads" -> File(externalRoot, "Download")
+            "music" -> File(externalRoot, "Music")
+            else -> externalRoot  // "all" = full storage
+        }
+
+        // Fall back to full storage if the subfolder doesn't exist
+        return if (targetDir.exists() && targetDir.isDirectory) {
+            Log.i(TAG, "Sharing folder: ${targetDir.absolutePath}")
+            targetDir
+        } else {
+            Log.w(TAG, "Folder ${targetDir.absolutePath} not found, falling back to full storage")
+            externalRoot
+        }
     }
 
     private fun getDeviceName(): String {
