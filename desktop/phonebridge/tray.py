@@ -15,7 +15,7 @@ from pystray import MenuItem, Menu
 from PIL import Image, ImageDraw, ImageFont
 
 from .discovery import PhoneScanner, DiscoveredPhone
-from .mounter import MountManager, MountInfo, MountError
+from .mounter import MountManager, MountInfo, MountError, AuthError
 from .config import ConfigManager, PhoneConfig
 from .startup import is_startup_enabled, enable_startup, disable_startup
 
@@ -365,13 +365,50 @@ class TrayIcon:
                     auth_user = phone_config.auth_user or phone.auth_user
                     auth_password = phone_config.auth_password
                     logger.info(f"Using saved password for {phone.display_name}")
-                else:
-                    # Prompt for password
+
+                    # Pre-check: verify saved password still works
+                    try:
+                        self.mounter.check_auth(
+                            phone.webdav_url, auth_user, auth_password
+                        )
+                    except AuthError:
+                        # Saved password is stale — clear it and ask for new one
+                        logger.warning(
+                            f"Saved password for {phone.display_name} is no longer valid"
+                        )
+                        self._notify(
+                            "Password Changed",
+                            f"\U0001f511 {phone.display_name}'s connection code was changed.\n"
+                            f"Please enter the new code.",
+                        )
+                        phone_config.auth_password = ""
+                        self.config.upsert_phone(phone_config)
+                        auth_password = ""
+                    except MountError:
+                        pass  # Network issue — let rclone try anyway
+
+                if not auth_password:
+                    # Prompt for password (first time or after password change)
                     auth_password = _ask_password(phone.display_name)
                     if not auth_password:
                         self._notify("Mount Cancelled", "No password provided.")
                         return
                     auth_user = phone.auth_user
+
+                    # Verify the new password before mounting
+                    try:
+                        self.mounter.check_auth(
+                            phone.webdav_url, auth_user, auth_password
+                        )
+                    except AuthError:
+                        self._notify(
+                            "Wrong Password",
+                            f"The connection code you entered is incorrect.\n"
+                            f"Check the code displayed on {phone.display_name}.",
+                        )
+                        return
+                    except MountError:
+                        pass  # Network issue — let rclone try anyway
 
             mount_info = self.mounter.mount(
                 phone, drive_letter,
@@ -496,8 +533,106 @@ class TrayIcon:
 
     def _on_mount_error(self, device_id: str, error: str):
         """Called when a mount encounters an error."""
-        self._notify("Mount Error", f"Lost connection: {error[:100]}")
+        is_auth = MountManager.is_auth_error(error)
+
+        if is_auth:
+            # Password was changed on the phone — trigger re-auth flow
+            logger.warning(f"Auth failure for {device_id} — starting re-auth flow")
+            threading.Thread(
+                target=self._handle_auth_failure,
+                args=(device_id,),
+                daemon=True,
+            ).start()
+        else:
+            self._notify("Mount Error", f"Lost connection: {error[:100]}")
+
         self._refresh_menu()
+
+    def _handle_auth_failure(self, device_id: str):
+        """
+        Handle an authentication failure:
+        1. Clear the stale saved password
+        2. Notify the user that the password changed
+        3. Prompt for the new connection code
+        4. Re-mount with new credentials
+        """
+        phone_config = self.config.get_phone(device_id)
+        if not phone_config:
+            logger.warning(f"No config found for {device_id}, cannot re-auth")
+            return
+
+        phone_name = phone_config.display_name
+
+        # 1. Clear stale password
+        phone_config.auth_password = ""
+        self.config.upsert_phone(phone_config)
+        logger.info(f"Cleared stale password for {phone_name}")
+
+        # 2. Notify and prompt
+        self._notify(
+            "Password Changed",
+            f"\U0001f511 {phone_name}'s connection code was changed.\n"
+            f"Enter the new code to reconnect.",
+        )
+
+        new_password = _ask_password(phone_name)
+        if not new_password:
+            self._notify(
+                "Reconnect Cancelled",
+                f"{phone_name} was disconnected. Mount again from the menu.",
+            )
+            return
+
+        # 3. Look up the discovered phone to re-mount
+        with self._lock:
+            phone = self._discovered.get(device_id)
+
+        if not phone:
+            # Phone may have been lost from mDNS — save the password for next auto-mount
+            logger.warning(f"Phone {phone_name} no longer on network, saving password for later")
+            phone_config.auth_password = new_password
+            self.config.upsert_phone(phone_config)
+            self._notify(
+                "Phone Not Found",
+                f"{phone_name} is not on the network. Will auto-connect when it reappears.",
+            )
+            return
+
+        # 4. Verify the new password
+        try:
+            self.mounter.check_auth(
+                phone.webdav_url, phone.auth_user, new_password
+            )
+        except AuthError:
+            self._notify(
+                "Wrong Password",
+                f"The connection code is incorrect. Check {phone_name}'s screen."
+            )
+            return
+        except MountError:
+            pass  # Network hiccup — let rclone try
+
+        # 5. Re-mount
+        drive_letter = phone_config.preferred_drive or self.mounter.get_next_drive_letter()
+        if not drive_letter:
+            self._notify("No Drive Letters", "No available drive letters.")
+            return
+
+        try:
+            self.mounter.mount(
+                phone, drive_letter,
+                auth_user=phone.auth_user,
+                auth_password=new_password,
+            )
+            # Save new credentials
+            phone_config.auth_password = new_password
+            phone_config.auth_user = phone.auth_user
+            phone_config.preferred_drive = drive_letter
+            self.config.upsert_phone(phone_config)
+            logger.info(f"\u2705 Re-mounted {phone_name} with new password")
+        except MountError as e:
+            logger.error(f"Re-mount failed: {e}")
+            self._notify("Re-mount Failed", str(e))
 
     # ─── Helpers ───────────────────────────────────────────────────
 

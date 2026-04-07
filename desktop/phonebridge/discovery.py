@@ -198,7 +198,18 @@ class PhoneScanner:
 
     def _handle_found(self, phone: DiscoveredPhone):
         with self._lock:
+            # Deduplicate by IP: if a phone with the same IP exists but has a different ID
+            # (e.g. from mDNS renaming due to collision like 'Xiaomi (1)'), remove the old one.
+            for old_id, p in list(self._phones.items()):
+                if p.ip_address == phone.ip_address and old_id != phone.device_id:
+                    logger.info(f"Removing stale mDNS duplicate for {p.display_name} (same IP)")
+                    self._phones.pop(old_id, None)
+                    if self._on_lost:
+                        # Call on_lost outside lock
+                        threading.Thread(target=self._on_lost, args=(old_id,), daemon=True).start()
+
             self._phones[phone.device_id] = phone
+            
         logger.info(f"📱 Phone discovered: {phone}")
         if self._on_found:
             self._on_found(phone)

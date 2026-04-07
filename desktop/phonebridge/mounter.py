@@ -8,6 +8,9 @@ import logging
 import subprocess
 import threading
 import time
+import urllib.request
+import ssl
+import base64
 from dataclasses import dataclass, field
 from typing import Optional, Callable
 
@@ -15,6 +18,17 @@ from .utils import check_rclone, check_winfsp, get_available_drive_letters
 from .discovery import DiscoveredPhone
 
 logger = logging.getLogger("phonebridge.mounter")
+
+# Markers in rclone stderr that indicate an authentication failure (401)
+AUTH_ERROR_MARKERS = [
+    "401",
+    "unauthorized",
+    "authentication failed",
+    "access denied",
+    "auth failed",
+    "login failed",
+    "invalid credentials",
+]
 
 
 @dataclass
@@ -40,6 +54,11 @@ class MountError(Exception):
     pass
 
 
+class AuthError(MountError):
+    """Raised specifically when mount fails due to invalid credentials (401)."""
+    pass
+
+
 class MountManager:
     """
     Manages rclone mount/unmount operations for phone WebDAV servers.
@@ -60,6 +79,7 @@ class MountManager:
         on_mount: Optional[Callable[[MountInfo], None]] = None,
         on_unmount: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str, str], None]] = None,
+        on_auth_failed: Optional[Callable[[str], None]] = None,
     ):
         self._rclone_path = rclone_path or check_rclone()
         self._vfs_cache_mode = vfs_cache_mode
@@ -69,6 +89,7 @@ class MountManager:
         self._on_mount = on_mount
         self._on_unmount = on_unmount
         self._on_error = on_error
+        self._on_auth_failed = on_auth_failed
 
         self._mounts: dict[str, MountInfo] = {}
         self._lock = threading.Lock()
@@ -101,6 +122,48 @@ class MountManager:
     def stop_health_monitor(self):
         """Stop the health monitoring thread."""
         self._running = False
+
+    @staticmethod
+    def is_auth_error(error_text: str) -> bool:
+        """Check if an error message indicates an authentication failure."""
+        lower = error_text.lower()
+        return any(marker in lower for marker in AUTH_ERROR_MARKERS)
+
+    def check_auth(self, webdav_url: str, user: str, password: str) -> bool:
+        """
+        Probe the WebDAV server to verify credentials before mounting.
+        
+        Returns True if auth succeeds, raises AuthError if 401,
+        raises MountError for other connection failures.
+        """
+        try:
+            # Build an OPTIONS request (lightweight, doesn't transfer data)
+            req = urllib.request.Request(webdav_url, method="OPTIONS")
+            if user and password:
+                credentials = base64.b64encode(f"{user}:{password}".encode()).decode()
+                req.add_header("Authorization", f"Basic {credentials}")
+
+            # Accept self-signed certs
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                logger.debug(f"Auth check passed (HTTP {resp.status})")
+                return True
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise AuthError(
+                    f"Authentication failed (HTTP 401). "
+                    f"The connection password may have been changed on the phone."
+                )
+            raise MountError(f"Server returned HTTP {e.code}: {e.reason}")
+        except urllib.error.URLError as e:
+            raise MountError(f"Cannot reach phone: {e.reason}")
+        except Exception as e:
+            # Don't block mount for probe failures — let rclone try
+            logger.warning(f"Auth pre-check failed (non-fatal): {e}")
+            return True
 
     def _obscure_password(self, password: str) -> str:
         """
@@ -196,6 +259,7 @@ class MountManager:
             "--log-level=NOTICE",
             "--no-console",
             "--network-mode",
+            "--skip-links",
         ]
 
         # Add auth credentials if provided
@@ -326,13 +390,14 @@ class MountManager:
             self._kill_mount_process(mount)
 
     def _health_check_loop(self):
-        """Periodically check mount health."""
+        """Periodically check mount health — both process and auth."""
         while self._running:
             with self._lock:
                 mounts = list(self._mounts.items())
 
             for device_id, mount in mounts:
                 if not mount.is_alive:
+                    # ── Process died ──────────────────────────────
                     logger.warning(f"Mount died: {mount.display_name} ({mount.drive_letter})")
                     stderr = ""
                     if mount.process and mount.process.stderr:
@@ -342,11 +407,46 @@ class MountManager:
                             pass
                     
                     mount.error = stderr or "Process exited unexpectedly"
+                    is_auth = self.is_auth_error(mount.error)
+                    
+                    if is_auth:
+                        logger.warning(
+                            f"\U0001f511 Auth failure detected for {mount.display_name} — "
+                            f"password was likely changed on the phone"
+                        )
                     
                     with self._lock:
                         self._mounts.pop(device_id, None)
 
-                    if self._on_error:
+                    if is_auth and self._on_auth_failed:
+                        self._on_auth_failed(device_id)
+                    elif self._on_error:
                         self._on_error(device_id, mount.error)
+                else:
+                    # ── Process alive — probe credentials ────────
+                    # rclone stays alive even when the server returns 401,
+                    # but all I/O operations fail. Detect this proactively.
+                    if mount.auth_user and mount.auth_password:
+                        try:
+                            self.check_auth(
+                                mount.webdav_url,
+                                mount.auth_user,
+                                mount.auth_password,
+                            )
+                        except AuthError:
+                            logger.warning(
+                                f"\U0001f511 Credentials rejected for live mount "
+                                f"{mount.display_name} ({mount.drive_letter}) — "
+                                f"password was changed on phone, unmounting..."
+                            )
+                            # Kill the rclone process and clean up
+                            self._kill_mount_process(mount)
+                            with self._lock:
+                                self._mounts.pop(device_id, None)
+                            if self._on_auth_failed:
+                                self._on_auth_failed(device_id)
+                        except (MountError, Exception) as e:
+                            # Network hiccup — don't treat as auth failure
+                            logger.debug(f"Health probe failed (non-auth): {e}")
 
             time.sleep(5)
