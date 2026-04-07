@@ -115,6 +115,26 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
             }
         }
+
+        // Regenerate password with confirmation
+        binding.btnRegenPassword.setOnClickListener {
+            if (!isServerRunning) {
+                Toast.makeText(this, "Start the server first", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Regenerate Password")
+                .setMessage("This will create a new connection code.\n\nYour PC will need to re-enter the new code to reconnect.")
+                .setPositiveButton("Regenerate") { _, _ ->
+                    startService(Intent(this, PhoneBridgeService::class.java).apply {
+                        action = PhoneBridgeService.ACTION_REGENERATE_PASSWORD
+                    })
+                    Toast.makeText(this, "Password regenerated", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     private fun setupAutoStartToggle() {

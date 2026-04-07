@@ -35,6 +35,7 @@ class PhoneBridgeService : Service() {
         const val ACTION_START = "com.phonebridge.action.START"
         const val ACTION_STOP = "com.phonebridge.action.STOP"
         const val ACTION_STATUS = "com.phonebridge.action.STATUS"
+        const val ACTION_REGENERATE_PASSWORD = "com.phonebridge.action.REGENERATE_PASSWORD"
 
         private const val PREFS_NAME = "phonebridge_prefs"
         private const val PREF_AUTH_PASSWORD = "auth_password"
@@ -91,6 +92,7 @@ class PhoneBridgeService : Service() {
             ACTION_START -> startServer()
             ACTION_STOP -> stopServer()
             ACTION_STATUS -> broadcastStatus()
+            ACTION_REGENERATE_PASSWORD -> regeneratePassword()
         }
         return START_STICKY
     }
@@ -341,14 +343,29 @@ class PhoneBridgeService : Service() {
             Log.i(TAG, "Loaded existing auth password")
             return existing
         }
+        return generateNewPassword()
+    }
 
-        // Generate a random 8-character alphanumeric password
+    private fun generateNewPassword(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
         val password = (1..8).map { chars.random() }.joinToString("")
-
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(PREF_AUTH_PASSWORD, password).apply()
         Log.i(TAG, "Generated new auth password")
         return password
+    }
+
+    /**
+     * Regenerate the auth password. Updates the running server and broadcasts
+     * the new password to the UI. The desktop app's saved password becomes
+     * invalid — the user must re-enter the new code on their PC.
+     */
+    private fun regeneratePassword() {
+        authPassword = generateNewPassword()
+        // Update the running WebDAV server with the new password
+        webDavServer?.updatePassword(authPassword)
+        Log.i(TAG, "Password regenerated — desktop must re-pair")
+        broadcastStatus()
     }
 
     // ─── Helpers ───────────────────────────────────────────────

@@ -38,11 +38,17 @@ data class ServerStats(
 class WebDavServer(
     port: Int = ServerConfig.DEFAULT_PORT,
     private val rootDir: File,
-    private val authPassword: String
+    @Volatile private var authPassword: String
 ) : NanoHTTPD(port) {
 
     companion object {
         private const val TAG = "WebDavServer"
+    }
+
+    /** Update the password at runtime (e.g. when user regenerates it). Thread-safe via @Volatile. */
+    fun updatePassword(newPassword: String) {
+        authPassword = newPassword
+        Log.i(TAG, "Auth password updated")
     }
 
     // ─── Stats Tracking ─────────────────────────────────────────
