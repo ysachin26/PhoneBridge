@@ -1,9 +1,25 @@
 package com.phonebridge.server
 
+import android.util.Base64
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import java.io.*
 import java.net.URLDecoder
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Real-time server statistics tracked across all requests.
+ */
+data class ServerStats(
+    val bytesServed: Long = 0,
+    val bytesReceived: Long = 0,
+    val totalRequests: Long = 0,
+    val activeConnections: Int = 0,
+    val startedAt: Long = 0,
+) {
+    val uptimeSeconds: Long get() = if (startedAt > 0) (System.currentTimeMillis() - startedAt) / 1000 else 0
+}
 
 /**
  * WebDAV server built on NanoHTTPD.
@@ -12,16 +28,42 @@ import java.net.URLDecoder
  * supporting the methods needed by rclone: OPTIONS, PROPFIND, GET,
  * PUT, DELETE, MKCOL, MOVE, COPY.
  *
+ * Includes HTTP Basic Auth to prevent unauthorized access on the network.
+ * Tracks transfer stats for display in the UI.
+ *
  * @param port The port to listen on (default: 8273)
  * @param rootDir The root directory to serve
+ * @param authPassword The password required for Basic Auth (username is always "phonebridge")
  */
 class WebDavServer(
     port: Int = ServerConfig.DEFAULT_PORT,
-    private val rootDir: File
+    private val rootDir: File,
+    private val authPassword: String
 ) : NanoHTTPD(port) {
 
     companion object {
         private const val TAG = "WebDavServer"
+    }
+
+    // ─── Stats Tracking ─────────────────────────────────────────
+    private val _bytesServed = AtomicLong(0)
+    private val _bytesReceived = AtomicLong(0)
+    private val _totalRequests = AtomicLong(0)
+    private val _activeConnections = AtomicInteger(0)
+    private var _startedAt: Long = 0
+
+    /** Get a snapshot of current server statistics. */
+    fun getStats(): ServerStats = ServerStats(
+        bytesServed = _bytesServed.get(),
+        bytesReceived = _bytesReceived.get(),
+        totalRequests = _totalRequests.get(),
+        activeConnections = _activeConnections.get(),
+        startedAt = _startedAt,
+    )
+
+    override fun start() {
+        _startedAt = System.currentTimeMillis()
+        super.start()
     }
 
     init {
@@ -31,13 +73,29 @@ class WebDavServer(
     }
 
     override fun serve(session: IHTTPSession): Response {
+        _totalRequests.incrementAndGet()
+        _activeConnections.incrementAndGet()
+
         val method = session.method.name.uppercase()
         val uri = session.uri ?: "/"
 
         Log.d(TAG, "$method $uri")
 
+        // ─── Authentication Check ────────────────────────────
+        if (!isAuthenticated(session)) {
+            _activeConnections.decrementAndGet()
+            Log.w(TAG, "Unauthorized request: $method $uri")
+            val response = newFixedLengthResponse(
+                Response.Status.UNAUTHORIZED,
+                "text/plain",
+                "Authentication required"
+            )
+            response.addHeader("WWW-Authenticate", "Basic realm=\"PhoneBridge\"")
+            return response
+        }
+
         return try {
-            when (method) {
+            val result = when (method) {
                 "OPTIONS" -> handleOptions()
                 "PROPFIND" -> handlePropfind(session)
                 "GET" -> handleGet(session)
@@ -53,6 +111,7 @@ class WebDavServer(
                     "Method $method not supported"
                 )
             }
+            result
         } catch (e: Exception) {
             Log.e(TAG, "Error handling $method $uri", e)
             newFixedLengthResponse(
@@ -60,6 +119,33 @@ class WebDavServer(
                 "text/plain",
                 "Internal server error: ${e.message}"
             )
+        } finally {
+            _activeConnections.decrementAndGet()
+        }
+    }
+
+    /**
+     * Validate HTTP Basic Auth credentials from the request.
+     */
+    private fun isAuthenticated(session: IHTTPSession): Boolean {
+        val authHeader = session.headers["authorization"] ?: return false
+
+        if (!authHeader.startsWith("Basic ", ignoreCase = true)) return false
+
+        return try {
+            val encoded = authHeader.substring(6)
+            val decoded = String(Base64.decode(encoded, Base64.NO_WRAP))
+            val parts = decoded.split(":", limit = 2)
+
+            if (parts.size != 2) return false
+
+            val username = parts[0]
+            val password = parts[1]
+
+            username == ServerConfig.AUTH_USERNAME && password == authPassword
+        } catch (e: Exception) {
+            Log.w(TAG, "Auth decode error: ${e.message}")
+            false
         }
     }
 
@@ -111,13 +197,15 @@ class WebDavServer(
             return serveDirectoryListing(file)
         }
 
-        // Serve file with streaming
+        // Serve file with streaming + track bytes
+        val fileSize = file.length()
         val mimeType = XmlResponseBuilder.guessMimeType(file)
         val fis = FileInputStream(file)
         val response = newFixedLengthResponse(
-            Response.Status.OK, mimeType, fis, file.length()
+            Response.Status.OK, mimeType, fis, fileSize
         )
         response.addHeader("Accept-Ranges", "bytes")
+        _bytesServed.addAndGet(fileSize)
         return response
     }
 
@@ -160,6 +248,7 @@ class WebDavServer(
                     if (bytesRead == -1) break
                     fos.write(buffer, 0, bytesRead)
                     remaining -= bytesRead
+                    _bytesReceived.addAndGet(bytesRead.toLong())
                 }
                 fos.flush()
             }

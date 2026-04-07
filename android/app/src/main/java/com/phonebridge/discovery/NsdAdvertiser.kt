@@ -26,8 +26,17 @@ class NsdAdvertiser(private val context: Context) {
      *
      * @param port The port the WebDAV server is running on
      * @param deviceName A human-readable name for this device
+     * @param authRequired Whether Basic Auth is required to connect
+     * @param authUser The username for Basic Auth (if required)
+     * @param protocol The protocol ("http" or "https")
      */
-    fun register(port: Int, deviceName: String) {
+    fun register(
+        port: Int,
+        deviceName: String,
+        authRequired: Boolean = true,
+        authUser: String = "phonebridge",
+        protocol: String = "https"
+    ) {
         if (isRegistered) {
             Log.w(TAG, "Already registered — unregister first")
             return
@@ -46,6 +55,11 @@ class NsdAdvertiser(private val context: Context) {
             setAttribute("model", Build.MODEL)
             setAttribute("brand", Build.BRAND)
             setAttribute("sdk", Build.VERSION.SDK_INT.toString())
+
+            // Auth and protocol TXT records
+            setAttribute("auth_required", authRequired.toString())
+            setAttribute("auth_user", authUser)
+            setAttribute("protocol", protocol)
         }
 
         registrationListener = object : NsdManager.RegistrationListener {
@@ -75,7 +89,7 @@ class NsdAdvertiser(private val context: Context) {
                 NsdManager.PROTOCOL_DNS_SD,
                 registrationListener
             )
-            Log.i(TAG, "Registering mDNS service: $deviceName on port $port")
+            Log.i(TAG, "Registering mDNS service: $deviceName on port $port (protocol=$protocol, auth=$authRequired)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register mDNS service", e)
         }
@@ -101,3 +115,4 @@ class NsdAdvertiser(private val context: Context) {
 
     fun isRegistered(): Boolean = isRegistered
 }
+

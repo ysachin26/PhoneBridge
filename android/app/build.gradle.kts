@@ -53,6 +53,9 @@ dependencies {
     // NanoHTTPD — Lightweight HTTP server
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 
+    // Bouncy Castle — TLS certificate generation
+    implementation("org.bouncycastle:bcpkix-jdk15on:1.70")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 

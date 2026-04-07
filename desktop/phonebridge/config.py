@@ -26,6 +26,8 @@ class PhoneConfig:
     preferred_drive: str = ""   # Preferred drive letter (e.g., "E:")
     auto_mount: bool = True     # Auto-mount when discovered
     color: str = "#4CAF50"      # Color tag for UI (green default)
+    auth_user: str = "phonebridge"  # Basic Auth username
+    auth_password: str = ""     # Basic Auth password (saved for auto-remount)
 
     def to_dict(self) -> dict:
         return asdict(self)

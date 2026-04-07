@@ -17,8 +17,59 @@ from PIL import Image, ImageDraw, ImageFont
 from .discovery import PhoneScanner, DiscoveredPhone
 from .mounter import MountManager, MountInfo, MountError
 from .config import ConfigManager, PhoneConfig
+from .startup import is_startup_enabled, enable_startup, disable_startup
 
 logger = logging.getLogger("phonebridge.tray")
+
+
+def _ask_password(phone_name: str) -> Optional[str]:
+    """
+    Show a password input dialog using a native Windows dialog via PowerShell.
+    
+    Tkinter cannot receive keyboard input when called from pystray's 
+    background thread on Windows. Using PowerShell as a subprocess 
+    completely avoids this issue since it runs in its own process.
+    
+    Returns the entered password or None if cancelled.
+    """
+    import subprocess
+    import sys
+
+    if sys.platform != "win32":
+        # Fallback for non-Windows (not expected, but safe)
+        return input(f"Enter password for {phone_name}: ")
+
+    # PowerShell script that shows a native Windows input dialog
+    ps_script = f'''
+Add-Type -AssemblyName Microsoft.VisualBasic
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$result = [Microsoft.VisualBasic.Interaction]::InputBox(
+    "Enter the connection password displayed on your phone screen.`n`nUsername: phonebridge",
+    "PhoneBridge - Connect to {phone_name}",
+    ""
+)
+if ($result) {{ Write-Output $result }} else {{ Write-Output "" }}
+'''
+
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        password = proc.stdout.strip()
+        if password:
+            return password
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("Password dialog timed out")
+        return None
+    except Exception as e:
+        logger.error(f"Password dialog error: {e}")
+        return None
 
 
 class TrayIcon:
@@ -195,9 +246,13 @@ class TrayIcon:
 
                 if is_mounted and mount_info:
                     label = f"📱 {phone.display_name} → {mount_info.drive_letter}"
+                    auth_label = "🔒 Authenticated" if mount_info.auth_user else "🔓 No auth"
+                    protocol_label = f"Protocol: {phone.protocol.upper()}"
                     submenu = Menu(
                         MenuItem(f"Drive: {mount_info.drive_letter}", None, enabled=False),
                         MenuItem(f"IP: {phone.ip_address}:{phone.port}", None, enabled=False),
+                        MenuItem(auth_label, None, enabled=False),
+                        MenuItem(protocol_label, None, enabled=False),
                         Menu.SEPARATOR,
                         MenuItem("Unmount", make_unmount(device_id)),
                         MenuItem(
@@ -206,10 +261,12 @@ class TrayIcon:
                         ),
                     )
                 else:
-                    label = f"📱 {phone.display_name}"
+                    auth_icon = "🔒" if phone.auth_required else "🔓"
+                    label = f"📱 {phone.display_name} {auth_icon}"
                     submenu = Menu(
                         MenuItem(f"IP: {phone.ip_address}:{phone.port}", None, enabled=False),
                         MenuItem(f"Model: {phone.device_model}", None, enabled=False),
+                        MenuItem(f"Protocol: {phone.protocol.upper()}", None, enabled=False),
                         Menu.SEPARATOR,
                         MenuItem("Mount as Drive", make_mount(phone)),
                     )
@@ -234,6 +291,14 @@ class TrayIcon:
         items.append(MenuItem(
             "🔄 Rescan Network",
             lambda: self._rescan(),
+        ))
+
+        # Start with Windows toggle
+        startup_enabled = is_startup_enabled()
+        items.append(MenuItem(
+            "⚡ Start with Windows",
+            lambda icon, item: self._toggle_startup(),
+            checked=lambda item: is_startup_enabled(),
         ))
 
         dep_status = self._get_dependency_status()
@@ -290,15 +355,39 @@ class TrayIcon:
                 self._notify("No Drive Letters", "No available drive letters. Unmount something first.")
                 return
 
-            mount_info = self.mounter.mount(phone, drive_letter)
+            # Handle authentication
+            auth_user = ""
+            auth_password = ""
 
-            # Save phone config
+            if phone.auth_required:
+                # Check if we have a saved password
+                if phone_config and phone_config.auth_password:
+                    auth_user = phone_config.auth_user or phone.auth_user
+                    auth_password = phone_config.auth_password
+                    logger.info(f"Using saved password for {phone.display_name}")
+                else:
+                    # Prompt for password
+                    auth_password = _ask_password(phone.display_name)
+                    if not auth_password:
+                        self._notify("Mount Cancelled", "No password provided.")
+                        return
+                    auth_user = phone.auth_user
+
+            mount_info = self.mounter.mount(
+                phone, drive_letter,
+                auth_user=auth_user,
+                auth_password=auth_password,
+            )
+
+            # Save phone config with credentials
             self.config.upsert_phone(PhoneConfig(
                 device_id=phone.device_id,
                 display_name=phone.display_name,
                 last_ip=phone.ip_address,
                 last_port=phone.port,
                 preferred_drive=drive_letter,
+                auth_user=auth_user,
+                auth_password=auth_password,
             ))
 
             self._refresh_menu()
@@ -337,6 +426,19 @@ class TrayIcon:
         except Exception as e:
             logger.error(f"Failed to open Explorer: {e}")
 
+    def _toggle_startup(self):
+        """Toggle the 'Start with Windows' setting."""
+        if is_startup_enabled():
+            disable_startup()
+            self.config.config.start_with_windows = False
+            self._notify("Startup Disabled", "PhoneBridge will no longer start with Windows.")
+        else:
+            enable_startup()
+            self.config.config.start_with_windows = True
+            self._notify("Startup Enabled", "PhoneBridge will start automatically when Windows starts.")
+        self.config.save()
+        self._refresh_menu()
+
     def _start_scanner(self):
         """Start the mDNS scanner."""
         self.scanner.start()
@@ -348,18 +450,23 @@ class TrayIcon:
         with self._lock:
             self._discovered[phone.device_id] = phone
 
-        self._notify("Phone Found", f"📱 {phone.display_name} ({phone.ip_address})")
+        auth_status = "🔒 Auth required" if phone.auth_required else "🔓 Open"
+        self._notify("Phone Found", f"📱 {phone.display_name} ({phone.ip_address}) — {auth_status}")
         self._refresh_menu()
 
         # Auto-mount if enabled
         phone_config = self.config.get_phone(phone.device_id)
         if phone_config and phone_config.auto_mount:
-            logger.info(f"Auto-mounting {phone.display_name}...")
-            threading.Thread(
-                target=self._mount_phone,
-                args=(phone,),
-                daemon=True,
-            ).start()
+            # Only auto-mount if we have saved credentials (or no auth required)
+            if not phone.auth_required or phone_config.auth_password:
+                logger.info(f"Auto-mounting {phone.display_name}...")
+                threading.Thread(
+                    target=self._mount_phone,
+                    args=(phone,),
+                    daemon=True,
+                ).start()
+            else:
+                logger.info(f"Skipping auto-mount for {phone.display_name} — password not saved")
 
     def _on_phone_lost(self, device_id: str):
         """Called when a phone disappears from the network."""

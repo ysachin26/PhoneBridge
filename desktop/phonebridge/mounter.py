@@ -24,6 +24,8 @@ class MountInfo:
     display_name: str
     drive_letter: str
     webdav_url: str
+    auth_user: str = ""
+    auth_password: str = ""
     process: Optional[subprocess.Popen] = field(default=None, repr=False)
     mounted_at: float = 0.0
     error: str = ""
@@ -100,10 +102,41 @@ class MountManager:
         """Stop the health monitoring thread."""
         self._running = False
 
+    def _obscure_password(self, password: str) -> str:
+        """
+        Obscure a password using rclone's built-in obscure command.
+        
+        rclone requires passwords passed via --webdav-pass to be in its
+        obscured format (a reversible encoding), not plaintext.
+        """
+        if not self._rclone_path or not password:
+            return password
+
+        try:
+            result = subprocess.run(
+                [self._rclone_path, "obscure", password],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            )
+            if result.returncode == 0:
+                obscured = result.stdout.strip()
+                logger.debug("Password obscured successfully")
+                return obscured
+            else:
+                logger.warning(f"rclone obscure failed: {result.stderr}")
+                return password
+        except Exception as e:
+            logger.warning(f"Failed to obscure password: {e}")
+            return password
+
     def mount(
         self,
         phone: DiscoveredPhone,
         drive_letter: str,
+        auth_user: str = "",
+        auth_password: str = "",
         timeout: float = 10.0,
     ) -> MountInfo:
         """
@@ -112,6 +145,8 @@ class MountManager:
         Args:
             phone: Discovered phone to mount
             drive_letter: Target drive letter (e.g., "E:")
+            auth_user: Username for Basic Auth (if required)
+            auth_password: Password for Basic Auth (if required)
             timeout: Seconds to wait for mount to establish
             
         Returns:
@@ -163,6 +198,18 @@ class MountManager:
             "--network-mode",
         ]
 
+        # Add auth credentials if provided
+        if auth_user and auth_password:
+            obscured_pass = self._obscure_password(auth_password)
+            cmd.append(f"--webdav-user={auth_user}")
+            cmd.append(f"--webdav-pass={obscured_pass}")
+            logger.info(f"  Auth: Basic (user={auth_user})")
+
+        # Add HTTPS certificate trust for self-signed certs
+        if phone.webdav_url.startswith("https://"):
+            cmd.append("--no-check-certificate")
+            logger.info("  TLS: Accepting self-signed certificate")
+
         try:
             # Start rclone process
             process = subprocess.Popen(
@@ -183,6 +230,8 @@ class MountManager:
                 display_name=phone.display_name,
                 drive_letter=drive_letter,
                 webdav_url=phone.webdav_url,
+                auth_user=auth_user,
+                auth_password=auth_password,
                 process=process,
                 mounted_at=time.time(),
             )

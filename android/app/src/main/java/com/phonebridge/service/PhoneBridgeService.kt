@@ -3,17 +3,16 @@ package com.phonebridge.service
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.wifi.WifiManager
-import android.os.Build
-import android.os.Environment
-import android.os.IBinder
-import android.os.PowerManager
+import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.phonebridge.MainActivity
 import com.phonebridge.R
 import com.phonebridge.discovery.NsdAdvertiser
 import com.phonebridge.server.ServerConfig
+import com.phonebridge.server.TlsHelper
 import com.phonebridge.server.WebDavServer
 import java.io.File
 import java.net.Inet4Address
@@ -37,10 +36,29 @@ class PhoneBridgeService : Service() {
         const val ACTION_STOP = "com.phonebridge.action.STOP"
         const val ACTION_STATUS = "com.phonebridge.action.STATUS"
 
+        private const val PREFS_NAME = "phonebridge_prefs"
+        private const val PREF_AUTH_PASSWORD = "auth_password"
+
         const val BROADCAST_STATUS = "com.phonebridge.broadcast.STATUS"
         const val EXTRA_IS_RUNNING = "is_running"
         const val EXTRA_IP_ADDRESS = "ip_address"
         const val EXTRA_PORT = "port"
+        const val EXTRA_PASSWORD = "auth_password"
+        const val EXTRA_PROTOCOL = "protocol"
+
+        // Stats extras
+        const val EXTRA_BYTES_SERVED = "bytes_served"
+        const val EXTRA_BYTES_RECEIVED = "bytes_received"
+        const val EXTRA_TOTAL_REQUESTS = "total_requests"
+        const val EXTRA_ACTIVE_CONNECTIONS = "active_connections"
+        const val EXTRA_UPTIME_SECONDS = "uptime_seconds"
+
+        // Storage extras
+        const val EXTRA_STORAGE_TOTAL = "storage_total"
+        const val EXTRA_STORAGE_USED = "storage_used"
+        const val EXTRA_STORAGE_FREE = "storage_free"
+
+        private const val STATS_INTERVAL_MS = 2000L  // Broadcast stats every 2 seconds
     }
 
     private var webDavServer: WebDavServer? = null
@@ -48,12 +66,24 @@ class PhoneBridgeService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var isRunning = false
+    private var authPassword: String = ""
+    private var protocol: String = "http"
+    private val statsHandler = Handler(Looper.getMainLooper())
+    private val statsBroadcaster = object : Runnable {
+        override fun run() {
+            if (isRunning) {
+                broadcastStatus()
+                statsHandler.postDelayed(this, STATS_INTERVAL_MS)
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        authPassword = loadOrGeneratePassword()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -91,27 +121,53 @@ class PhoneBridgeService : Service() {
             acquireWifiLock()
             acquireWakeLock()
 
-            // Start WebDAV server
+            // Start WebDAV server with authentication
             val port = ServerConfig.DEFAULT_PORT
-            webDavServer = WebDavServer(port, storageRoot)
+            webDavServer = WebDavServer(port, storageRoot, authPassword)
+
+            // Enable HTTPS/TLS if configured
+            if (ServerConfig.HTTPS_ENABLED) {
+                try {
+                    val sslFactory = TlsHelper.getSSLServerSocketFactory(applicationContext)
+                    webDavServer?.makeSecure(sslFactory, null)
+                    protocol = "https"
+                    Log.i(TAG, "🔒 HTTPS/TLS enabled")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to enable HTTPS, falling back to HTTP", e)
+                    protocol = "http"
+                }
+            } else {
+                protocol = "http"
+            }
+
             webDavServer?.start()
 
-            // Start mDNS advertiser
+            // Start mDNS advertiser with auth and protocol info
             val deviceName = getDeviceName()
             nsdAdvertiser = NsdAdvertiser(this)
-            nsdAdvertiser?.register(port, deviceName)
+            nsdAdvertiser?.register(
+                port = port,
+                deviceName = deviceName,
+                authRequired = true,
+                authUser = ServerConfig.AUTH_USERNAME,
+                protocol = protocol
+            )
 
             isRunning = true
             val ip = getLocalIpAddress()
 
-            Log.i(TAG, "🚀 Server started on http://$ip:$port")
+            Log.i(TAG, "🚀 Server started on $protocol://$ip:$port")
             Log.i(TAG, "   Serving: ${storageRoot.absolutePath}")
             Log.i(TAG, "   Device: $deviceName")
+            Log.i(TAG, "   Auth: Basic (user=${ServerConfig.AUTH_USERNAME})")
 
             // Show foreground notification
             startForeground(NOTIFICATION_ID, buildNotification(ip, port))
 
             broadcastStatus()
+
+            // Start periodic stats broadcasting
+            statsHandler.postDelayed(statsBroadcaster, STATS_INTERVAL_MS)
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start server", e)
@@ -121,6 +177,9 @@ class PhoneBridgeService : Service() {
 
     private fun stopServer() {
         Log.i(TAG, "Stopping server...")
+
+        // Stop stats broadcasting
+        statsHandler.removeCallbacks(statsBroadcaster)
 
         // Stop mDNS
         nsdAdvertiser?.unregister()
@@ -177,9 +236,11 @@ class PhoneBridgeService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val protocolLabel = if (protocol == "https") "🔒 " else ""
+
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("PhoneBridge Active")
-            .setContentText("Sharing storage at $ip:$port")
+            .setContentText("${protocolLabel}Sharing storage at $protocol://$ip:$port")
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
@@ -196,10 +257,28 @@ class PhoneBridgeService : Service() {
     // ─── Broadcast ─────────────────────────────────────────────
 
     private fun broadcastStatus() {
+        val stats = webDavServer?.getStats()
+        val storageRoot = getStorageRoot()
+
         val intent = Intent(BROADCAST_STATUS).apply {
             putExtra(EXTRA_IS_RUNNING, isRunning)
             putExtra(EXTRA_IP_ADDRESS, getLocalIpAddress())
             putExtra(EXTRA_PORT, ServerConfig.DEFAULT_PORT)
+            putExtra(EXTRA_PASSWORD, authPassword)
+            putExtra(EXTRA_PROTOCOL, protocol)
+
+            // Stats
+            putExtra(EXTRA_BYTES_SERVED, stats?.bytesServed ?: 0L)
+            putExtra(EXTRA_BYTES_RECEIVED, stats?.bytesReceived ?: 0L)
+            putExtra(EXTRA_TOTAL_REQUESTS, stats?.totalRequests ?: 0L)
+            putExtra(EXTRA_ACTIVE_CONNECTIONS, stats?.activeConnections ?: 0)
+            putExtra(EXTRA_UPTIME_SECONDS, stats?.uptimeSeconds ?: 0L)
+
+            // Storage info
+            putExtra(EXTRA_STORAGE_TOTAL, storageRoot.totalSpace)
+            putExtra(EXTRA_STORAGE_USED, storageRoot.totalSpace - storageRoot.freeSpace)
+            putExtra(EXTRA_STORAGE_FREE, storageRoot.freeSpace)
+
             setPackage(packageName)
         }
         sendBroadcast(intent)
@@ -247,6 +326,29 @@ class PhoneBridgeService : Service() {
             }
         }
         wakeLock = null
+    }
+
+    // ─── Auth ──────────────────────────────────────────────────
+
+    /**
+     * Load existing password from SharedPreferences, or generate a new one.
+     * Password persists across app restarts so the PC doesn't need to re-pair.
+     */
+    private fun loadOrGeneratePassword(): String {
+        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(PREF_AUTH_PASSWORD, null)
+        if (!existing.isNullOrBlank()) {
+            Log.i(TAG, "Loaded existing auth password")
+            return existing
+        }
+
+        // Generate a random 8-character alphanumeric password
+        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+        val password = (1..8).map { chars.random() }.joinToString("")
+
+        prefs.edit().putString(PREF_AUTH_PASSWORD, password).apply()
+        Log.i(TAG, "Generated new auth password")
+        return password
     }
 
     // ─── Helpers ───────────────────────────────────────────────

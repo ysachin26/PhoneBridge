@@ -28,6 +28,9 @@ class DiscoveredPhone:
     port: int               # Server port
     device_model: str       # Phone model from TXT record
     version: str            # PhoneBridge server version
+    auth_required: bool = True   # Whether Basic Auth is required
+    auth_user: str = "phonebridge"  # Username for Basic Auth
+    protocol: str = "https"      # "http" or "https"
 
     @property
     def device_id(self) -> str:
@@ -37,10 +40,11 @@ class DiscoveredPhone:
     @property
     def webdav_url(self) -> str:
         """Full WebDAV URL for rclone."""
-        return f"http://{self.ip_address}:{self.port}"
+        return f"{self.protocol}://{self.ip_address}:{self.port}"
 
     def __str__(self):
-        return f"{self.display_name} ({self.ip_address}:{self.port})"
+        auth_status = "🔒" if self.auth_required else "🔓"
+        return f"{self.display_name} ({self.protocol}://{self.ip_address}:{self.port}) {auth_status}"
 
 
 class PhoneDiscoveryListener(ServiceListener):
@@ -105,6 +109,9 @@ class PhoneDiscoveryListener(ServiceListener):
         display_name = properties.get("deviceName", name.split(".")[0])
         device_model = properties.get("model", "Unknown")
         version = properties.get("version", "0")
+        auth_required = properties.get("auth_required", "true").lower() == "true"
+        auth_user = properties.get("auth_user", "phonebridge")
+        protocol = properties.get("protocol", "http")
 
         phone = DiscoveredPhone(
             service_name=name,
@@ -113,6 +120,9 @@ class PhoneDiscoveryListener(ServiceListener):
             port=port,
             device_model=device_model,
             version=version,
+            auth_required=auth_required,
+            auth_user=auth_user,
+            protocol=protocol,
         )
 
         logger.info(f"Resolved: {phone}")

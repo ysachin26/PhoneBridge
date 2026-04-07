@@ -2,6 +2,8 @@ package com.phonebridge
 
 import android.Manifest
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -11,15 +13,18 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.phonebridge.databinding.ActivityMainBinding
+import com.phonebridge.receiver.BootReceiver
 import com.phonebridge.service.PhoneBridgeService
 
 /**
  * Main activity with a simple toggle to start/stop the PhoneBridge server.
+ * Displays connection password and provides settings for auto-start on boot.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -36,7 +41,9 @@ class MainActivity : AppCompatActivity() {
                 val running = intent.getBooleanExtra(PhoneBridgeService.EXTRA_IS_RUNNING, false)
                 val ip = intent.getStringExtra(PhoneBridgeService.EXTRA_IP_ADDRESS) ?: "0.0.0.0"
                 val port = intent.getIntExtra(PhoneBridgeService.EXTRA_PORT, 8273)
-                updateUI(running, ip, port)
+                val password = intent.getStringExtra(PhoneBridgeService.EXTRA_PASSWORD) ?: ""
+                val protocol = intent.getStringExtra(PhoneBridgeService.EXTRA_PROTOCOL) ?: "http"
+                updateUI(running, ip, port, password, protocol)
             }
         }
     }
@@ -47,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         setupUI()
+        setupAutoStartToggle()
         checkPermissions()
     }
 
@@ -82,8 +90,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Copy password button
+        binding.btnCopyPassword.setOnClickListener {
+            val password = binding.tvPassword.text.toString()
+            if (password.isNotBlank() && password != "--------") {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("PhoneBridge Password", password)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Password copied to clipboard!", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         // Initial state
-        updateUI(false, "—", 0)
+        updateUI(false, "—", 0, "", "http")
+    }
+
+    private fun setupAutoStartToggle() {
+        val prefs = getSharedPreferences(BootReceiver.PREFS_NAME, Context.MODE_PRIVATE)
+        val autoStartEnabled = prefs.getBoolean(BootReceiver.PREF_AUTO_START, false)
+        binding.switchAutoStart.isChecked = autoStartEnabled
+
+        binding.switchAutoStart.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(BootReceiver.PREF_AUTO_START, isChecked).apply()
+            val status = if (isChecked) "enabled" else "disabled"
+            Toast.makeText(this, "Auto-start on boot $status", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun startPhoneBridge() {
@@ -112,7 +143,7 @@ class MainActivity : AppCompatActivity() {
         startService(intent)
     }
 
-    private fun updateUI(running: Boolean, ip: String, port: Int) {
+    private fun updateUI(running: Boolean, ip: String, port: Int, password: String, protocol: String) {
         isServerRunning = running
 
         runOnUiThread {
@@ -122,11 +153,18 @@ class MainActivity : AppCompatActivity() {
                     ContextCompat.getColor(this, android.R.color.holo_red_dark)
                 )
                 binding.tvStatus.text = "🟢 Server Running"
-                binding.tvAddress.text = "http://$ip:$port"
+
+                val tlsIndicator = if (protocol == "https") "🔒 " else ""
+                binding.tvAddress.text = "${tlsIndicator}$protocol://$ip:$port"
+
                 binding.tvInfo.text = "Your PC can now discover and mount this phone's storage.\n\nMake sure PhoneBridge is running on your PC."
                 binding.statusIndicator.setBackgroundColor(
                     ContextCompat.getColor(this, android.R.color.holo_green_dark)
                 )
+
+                // Show password card
+                binding.cardPassword.visibility = View.VISIBLE
+                binding.tvPassword.text = password
             } else {
                 binding.btnToggle.text = "Start Server"
                 binding.btnToggle.setBackgroundColor(
@@ -138,6 +176,10 @@ class MainActivity : AppCompatActivity() {
                 binding.statusIndicator.setBackgroundColor(
                     ContextCompat.getColor(this, android.R.color.darker_gray)
                 )
+
+                // Hide password card
+                binding.cardPassword.visibility = View.GONE
+                binding.tvPassword.text = "--------"
             }
         }
     }
