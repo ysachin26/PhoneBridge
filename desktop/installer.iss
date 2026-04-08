@@ -9,7 +9,7 @@
 ;   - Registers "Start with Windows" option
 
 #define MyAppName "PhoneBridge"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "PhoneBridge"
 #define MyAppURL "https://github.com/ysachin26/PhoneBridge"
 #define MyAppExeName "PhoneBridge.exe"

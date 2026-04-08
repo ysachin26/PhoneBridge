@@ -221,110 +221,39 @@ class TrayIcon:
 
     def _build_menu(self) -> Menu:
         """Build the right-click context menu."""
-        
-        def make_unmount(did):
-            return lambda icon, item: self._unmount_phone(did)
-            
-        def make_mount(p):
-            return lambda icon, item: self._mount_phone(p)
-            
-        def make_explorer(dl):
-            return lambda icon, item: self._open_explorer(dl)
-
         items = []
 
-        # Header
-        items.append(MenuItem("PhoneBridge", None, enabled=False))
-        items.append(Menu.SEPARATOR)
-
-        # Discovered phones section
+        # Header status
         with self._lock:
-            phones = dict(self._discovered)
-
-        if phones:
-            for device_id, phone in phones.items():
-                is_mounted = self.mounter.is_mounted(device_id)
-                mount_info = self.mounter.get_mounts().get(device_id)
-
-                if is_mounted and mount_info:
-                    label = f"📱 {phone.display_name} → {mount_info.drive_letter}"
-                    auth_label = "🔒 Authenticated" if mount_info.auth_user else "🔓 No auth"
-                    protocol_label = f"Protocol: {phone.protocol.upper()}"
-                    submenu = Menu(
-                        MenuItem(f"Drive: {mount_info.drive_letter}", None, enabled=False),
-                        MenuItem(f"IP: {phone.ip_address}:{phone.port}", None, enabled=False),
-                        MenuItem(auth_label, None, enabled=False),
-                        MenuItem(protocol_label, None, enabled=False),
-                        Menu.SEPARATOR,
-                        MenuItem("Unmount", make_unmount(device_id)),
-                        MenuItem(
-                            "Open in Explorer",
-                            make_explorer(mount_info.drive_letter),
-                        ),
-                    )
-                else:
-                    auth_icon = "🔒" if phone.auth_required else "🔓"
-                    label = f"📱 {phone.display_name} {auth_icon}"
-                    submenu = Menu(
-                        MenuItem(f"IP: {phone.ip_address}:{phone.port}", None, enabled=False),
-                        MenuItem(f"Model: {phone.device_model}", None, enabled=False),
-                        MenuItem(f"Protocol: {phone.protocol.upper()}", None, enabled=False),
-                        Menu.SEPARATOR,
-                        MenuItem("Mount as Drive", make_mount(phone)),
-                    )
-
-                items.append(MenuItem(label, submenu))
-        else:
-            items.append(MenuItem("No phones found", None, enabled=False))
-            items.append(MenuItem("Make sure PhoneBridge is running on your phone", None, enabled=False))
-
-        items.append(Menu.SEPARATOR)
-
-        # Actions
+            n_discovered = len(self._discovered)
+        
         mounts = self.mounter.get_mounts()
-        if mounts:
-            items.append(MenuItem(
-                f"Unmount All ({len(mounts)} mounted)",
-                lambda: self._unmount_all(),
-            ))
-            items.append(Menu.SEPARATOR)
+        n_mounted = len(mounts)
 
-        # Settings & Info
-        items.append(MenuItem(
-            "🔄 Rescan Network",
-            lambda: self._rescan(),
-        ))
+        if n_mounted > 0:
+            header_text = f"PhoneBridge ({n_mounted} mounted)"
+        elif n_discovered > 0:
+            header_text = f"PhoneBridge ({n_discovered} found)"
+        else:
+            header_text = "PhoneBridge (Scanning...)"
 
-        # Start with Windows toggle
-        startup_enabled = is_startup_enabled()
-        items.append(MenuItem(
-            "⚡ Start with Windows",
-            lambda icon, item: self._toggle_startup(),
-            checked=lambda item: is_startup_enabled(),
-        ))
-
-        dep_status = self._get_dependency_status()
-        items.append(MenuItem(
-            f"Dependencies: {dep_status}",
-            None,
-            enabled=False,
-        ))
-
+        items.append(MenuItem(header_text, None, enabled=False))
         items.append(Menu.SEPARATOR)
 
         # Open GUI window
         if self._gui:
-            items.insert(0, MenuItem(
+            items.append(MenuItem(
                 "📱 Open PhoneBridge",
                 lambda: self._open_gui(),
+                default=True
             ))
-            items.insert(1, Menu.SEPARATOR)
+            items.append(Menu.SEPARATOR)
 
         items.append(MenuItem(
             "📖 GitHub",
             lambda: webbrowser.open("https://github.com/ysachin26/PhoneBridge"),
         ))
-
+        
         items.append(MenuItem("Quit", lambda: self._quit()))
 
         return Menu(*items)
