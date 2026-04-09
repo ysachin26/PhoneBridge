@@ -19,12 +19,12 @@
 
 ## Features
 
-- 📱 **One-click mount** — Phone storage appears as E:, F:, G: drives in Windows Explorer
-- 📡 **Wireless** — No USB cable needed, works over Wi-Fi
-- 🔍 **Auto-discovery** — Phones are detected automatically via mDNS
-- 📱📱📱 **Multi-phone** — Mount multiple phones simultaneously as separate drive letters
-- 🔓 **Open source** — Free forever, GPL v3 licensed
-- 🔒 **Private** — Direct phone-to-PC connection, no cloud, no middleman
+- 1.**One-click mount** — Phone storage appears as E:, F:, G: drives in Windows Explorer
+- 2.**Wireless** — No USB cable needed, works over Wi-Fi
+- 3.**Auto-discovery** — Phones are detected automatically via mDNS
+- 4.**Multi-phone** — Mount multiple phones simultaneously as separate drive letters
+- 5.**Open source** — Free forever, GPL v3 licensed
+- 6.**Private** — Direct phone-to-PC connection, no cloud, no middleman
 
 ## How It Works
 
