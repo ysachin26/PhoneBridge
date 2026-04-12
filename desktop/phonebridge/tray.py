@@ -220,7 +220,7 @@ class TrayIcon:
     # ─── Menu Building ─────────────────────────────────────────────
 
     def _build_menu(self) -> Menu:
-        """Build the right-click context menu."""
+        """Build the right-click context menu with phone submenus."""
         items = []
 
         # Header status
@@ -248,6 +248,88 @@ class TrayIcon:
                 default=True
             ))
             items.append(Menu.SEPARATOR)
+
+        # ─── Per-Phone Submenus ────────────────────────────────
+        with self._lock:
+            phones = list(self._discovered.values())
+
+        for phone in phones:
+            mount = mounts.get(phone.device_id)
+            is_mounted = mount is not None and mount.is_alive
+
+            if is_mounted:
+                # Mounted phone submenu
+                phone_items = [
+                    MenuItem(
+                        f"✅ Mounted on {mount.drive_letter}",
+                        None,
+                        enabled=False,
+                    ),
+                    MenuItem(
+                        f"{phone.protocol.upper()} · {phone.ip_address}:{phone.port}",
+                        None,
+                        enabled=False,
+                    ),
+                    Menu.SEPARATOR,
+                    MenuItem(
+                        "📂 Open in Explorer",
+                        lambda d=mount.drive_letter: self._open_explorer(d),
+                    ),
+                    MenuItem(
+                        "⏏ Unmount",
+                        lambda did=phone.device_id: self._unmount_phone(did),
+                    ),
+                ]
+                label = f"📱 {phone.display_name} ({mount.drive_letter})"
+            else:
+                # Discovered but not mounted
+                phone_items = [
+                    MenuItem(
+                        f"{phone.protocol.upper()} · {phone.ip_address}:{phone.port}",
+                        None,
+                        enabled=False,
+                    ),
+                    MenuItem(
+                        "🔒 Auth Required" if phone.auth_required else "🔓 Open",
+                        None,
+                        enabled=False,
+                    ),
+                    Menu.SEPARATOR,
+                    MenuItem(
+                        "💾 Mount Drive",
+                        lambda p=phone: threading.Thread(
+                            target=self._mount_phone, args=(p,), daemon=True
+                        ).start(),
+                    ),
+                ]
+                label = f"📱 {phone.display_name}"
+
+            items.append(MenuItem(label, Menu(*phone_items)))
+
+        if not phones:
+            items.append(MenuItem("📡 No phones found yet...", None, enabled=False))
+
+        items.append(Menu.SEPARATOR)
+
+        # ─── Global Actions ────────────────────────────────────
+        if n_mounted > 0:
+            items.append(MenuItem(
+                f"⏏ Unmount All ({n_mounted})",
+                lambda: self._unmount_all(),
+            ))
+
+        items.append(MenuItem(
+            "🔄 Rescan Network",
+            lambda: self._rescan(),
+        ))
+
+        items.append(MenuItem(
+            "🚀 Start with Windows",
+            lambda: self._toggle_startup(),
+            checked=lambda _: is_startup_enabled(),
+        ))
+
+        items.append(Menu.SEPARATOR)
 
         items.append(MenuItem(
             "📖 GitHub",

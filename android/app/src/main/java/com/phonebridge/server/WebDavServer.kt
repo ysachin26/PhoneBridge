@@ -101,6 +101,11 @@ class WebDavServer(
         }
 
         return try {
+            // ─── PhoneBridge Status API ──────────────────────
+            if (uri == "/phonebridge/status" && method == "GET") {
+                return handleStatusApi()
+            }
+
             val result = when (method) {
                 "OPTIONS" -> handleOptions()
                 "PROPFIND" -> handlePropfind(session)
@@ -153,6 +158,37 @@ class WebDavServer(
             Log.w(TAG, "Auth decode error: ${e.message}")
             false
         }
+    }
+
+    // ─── Status API ──────────────────────────────────────────────
+
+    /**
+     * Returns a JSON response with server stats, storage info, and version.
+     * Called by the desktop client to display phone storage in the UI.
+     */
+    private fun handleStatusApi(): Response {
+        val stats = getStats()
+        val totalSpace = rootDir.totalSpace
+        val freeSpace = rootDir.freeSpace
+        val usedSpace = totalSpace - freeSpace
+
+        val json = """
+        {
+            "version": "${ServerConfig.VERSION}",
+            "uptime_seconds": ${stats.uptimeSeconds},
+            "bytes_served": ${stats.bytesServed},
+            "bytes_received": ${stats.bytesReceived},
+            "total_requests": ${stats.totalRequests},
+            "active_connections": ${stats.activeConnections},
+            "storage_total": $totalSpace,
+            "storage_used": $usedSpace,
+            "storage_free": $freeSpace
+        }
+        """.trimIndent()
+
+        val response = newFixedLengthResponse(Response.Status.OK, "application/json", json)
+        response.addHeader("Cache-Control", "no-cache")
+        return response
     }
 
     // ─── OPTIONS ─────────────────────────────────────────────────

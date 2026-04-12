@@ -4,12 +4,16 @@ PhoneBridge — Desktop GUI (customtkinter)
 Native desktop window for managing phone connections, mounts, and settings.
 """
 
+import json
 import logging
 import os
 import subprocess
+import ssl
 import sys
 import threading
 import time
+import urllib.request
+import webbrowser
 from typing import Optional
 
 import customtkinter as ctk
@@ -18,7 +22,7 @@ from .config import ConfigManager, PhoneConfig
 from .discovery import PhoneScanner, DiscoveredPhone
 from .mounter import MountManager, MountInfo, MountError, AuthError
 from .startup import is_startup_enabled, enable_startup, disable_startup
-from .utils import check_rclone, check_winfsp
+from .utils import check_rclone, check_winfsp, format_size
 from . import __version__
 
 logger = logging.getLogger("phonebridge.gui")
@@ -45,7 +49,9 @@ class DeviceCard(ctk.CTkFrame):
     """Card widget for a single discovered phone."""
 
     def __init__(self, master, phone: DiscoveredPhone, mount_info: Optional[MountInfo],
-                 on_mount, on_unmount, on_explorer, on_change_pass, **kwargs):
+                 on_mount, on_unmount, on_explorer, on_change_pass,
+                 on_remove=None, on_toggle_automount=None,
+                 phone_config=None, phone_status=None, **kwargs):
         super().__init__(
             master,
             fg_color=COLOR_MOUNTED if mount_info and mount_info.is_alive else COLOR_CARD,
@@ -60,6 +66,10 @@ class DeviceCard(ctk.CTkFrame):
         self._on_unmount = on_unmount
         self._on_explorer = on_explorer
         self._on_change_pass = on_change_pass
+        self._on_remove = on_remove
+        self._on_toggle_automount = on_toggle_automount
+        self._phone_config = phone_config
+        self._phone_status = phone_status
 
         self._build()
 
@@ -125,9 +135,34 @@ class DeviceCard(ctk.CTkFrame):
         )
         detail_label.pack(side="left")
 
+        # ─── Storage Info (from REST API) ────────────────
+        if self._phone_status and self._phone_status.get("storage_total", 0) > 0:
+            storage_frame = ctk.CTkFrame(self, fg_color="transparent")
+            storage_frame.pack(fill="x", padx=pad, pady=(0, 6))
+
+            total = self._phone_status["storage_total"]
+            used = self._phone_status["storage_used"]
+            pct = int((used / total) * 100) if total > 0 else 0
+            pct_color = COLOR_GREEN if pct < 75 else (COLOR_ORANGE if pct < 90 else COLOR_RED)
+
+            storage_bar = ctk.CTkProgressBar(
+                storage_frame, width=200, height=8,
+                progress_color=pct_color,
+                fg_color="#21262d",
+            )
+            storage_bar.set(pct / 100.0)
+            storage_bar.pack(side="left", padx=(0, 10))
+
+            ctk.CTkLabel(
+                storage_frame,
+                text=f"{format_size(used)} / {format_size(total)} ({pct}%)",
+                font=ctk.CTkFont(size=11),
+                text_color=COLOR_TEXT_SEC,
+            ).pack(side="left")
+
         # ─── Action Buttons ───────────────────────────────
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=pad, pady=(4, pad))
+        btn_frame.pack(fill="x", padx=pad, pady=(4, 8))
 
         if is_mounted:
             ctk.CTkButton(
@@ -168,6 +203,33 @@ class DeviceCard(ctk.CTkFrame):
                     font=ctk.CTkFont(size=13, weight="bold"),
                     command=lambda: self._on_mount(self.phone),
                 ).pack(side="left")
+
+        # ─── Bottom Row: Auto-mount Toggle + Remove ───────
+        bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
+        bottom_frame.pack(fill="x", padx=pad, pady=(0, pad))
+
+        auto_mount_val = True
+        if self._phone_config:
+            auto_mount_val = self._phone_config.auto_mount
+
+        auto_var = ctk.BooleanVar(value=auto_mount_val)
+        ctk.CTkCheckBox(
+            bottom_frame, text="Auto-mount",
+            variable=auto_var,
+            font=ctk.CTkFont(size=12),
+            text_color=COLOR_TEXT_SEC,
+            command=lambda: self._on_toggle_automount(self.phone.device_id, auto_var.get()) if self._on_toggle_automount else None,
+            checkbox_width=18, checkbox_height=18,
+        ).pack(side="left")
+
+        if self._on_remove:
+            ctk.CTkButton(
+                bottom_frame, text="🗑 Forget", width=80,
+                fg_color="transparent", hover_color="#3a1a1a",
+                text_color=COLOR_TEXT_SEC,
+                font=ctk.CTkFont(size=11),
+                command=lambda: self._on_remove(self.phone.device_id),
+            ).pack(side="right")
 
 
 class PasswordDialog(ctk.CTkToplevel):
@@ -259,6 +321,7 @@ class PhoneBridgeApp(ctk.CTk):
         self.scanner = scanner
         self.mounter = mounter
         self.config = config
+        self._phone_statuses: dict = {}  # Cache for phone status API responses
 
         # Window setup
         self.title(f"PhoneBridge v{__version__}")
@@ -406,6 +469,10 @@ class PhoneBridgeApp(ctk.CTk):
     def _start_polling(self):
         """Poll for device changes every 2 seconds."""
         self._refresh_devices()
+        # Fetch phone statuses in background every 10 seconds
+        self._poll_count = getattr(self, '_poll_count', 0) + 1
+        if self._poll_count % 5 == 1:  # Every 10 seconds (5 * 2s)
+            threading.Thread(target=self._fetch_phone_statuses, daemon=True).start()
         self.after(2000, self._start_polling)
 
     def _refresh_devices(self):
@@ -448,6 +515,8 @@ class PhoneBridgeApp(ctk.CTk):
         for device_id, phone in phones.items():
             try:
                 mount = mounts.get(device_id)
+                phone_config = self.config.get_phone(device_id)
+                phone_status = self._phone_statuses.get(device_id)
                 card = DeviceCard(
                     self.device_scroll,
                     phone=phone,
@@ -456,11 +525,14 @@ class PhoneBridgeApp(ctk.CTk):
                     on_unmount=self._handle_unmount,
                     on_explorer=self._handle_explorer,
                     on_change_pass=self._handle_change_pass,
+                    on_remove=self._handle_remove_phone,
+                    on_toggle_automount=self._handle_toggle_automount,
+                    phone_config=phone_config,
+                    phone_status=phone_status,
                 )
                 card.pack(fill="x", pady=(0, 10))
             except Exception as e:
                 logger.error(f"Failed to render card for {phone.display_name}: {e}")
-                # Fallback: show a simple label
                 fallback = ctk.CTkLabel(
                     self.device_scroll,
                     text=f"  {phone.display_name} — {phone.ip_address}:{phone.port}",
@@ -576,15 +648,85 @@ class PhoneBridgeApp(ctk.CTk):
         if mount and mount.is_alive:
             subprocess.Popen(["explorer.exe", mount.drive_letter])
 
+    def _handle_remove_phone(self, device_id: str):
+        """Remove a phone from saved config."""
+        phone_config = self.config.get_phone(device_id)
+        if phone_config:
+            dialog = ctk.CTkToplevel(self)
+            dialog.title("Forget Phone")
+            dialog.geometry("380x150")
+            dialog.configure(fg_color=COLOR_BG)
+            dialog.transient(self)
+            dialog.grab_set()
+
+            ctk.CTkLabel(dialog, text=f"Forget {phone_config.display_name}?",
+                         font=ctk.CTkFont(size=16, weight="bold"),
+                         text_color=COLOR_TEXT).pack(padx=24, pady=(20, 4), anchor="w")
+            ctk.CTkLabel(dialog, text="Saved password and preferences will be removed.",
+                         font=ctk.CTkFont(size=13),
+                         text_color=COLOR_TEXT_SEC).pack(padx=24, anchor="w")
+            btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+            btn_frame.pack(fill="x", padx=24, pady=(16, 20))
+            ctk.CTkButton(btn_frame, text="Cancel", width=80,
+                          fg_color="transparent", border_color=COLOR_CARD_BORDER, border_width=1,
+                          command=dialog.destroy).pack(side="right", padx=(8, 0))
+            ctk.CTkButton(btn_frame, text="Forget", width=80,
+                          fg_color=COLOR_RED, hover_color="#da3633",
+                          command=lambda: (self.config.remove_phone(device_id), dialog.destroy())
+                          ).pack(side="right")
+
+    def _handle_toggle_automount(self, device_id: str, enabled: bool):
+        """Toggle auto-mount for a phone."""
+        phone_config = self.config.get_phone(device_id)
+        if phone_config:
+            phone_config.auto_mount = enabled
+            self.config.upsert_phone(phone_config)
+        else:
+            # Create a minimal config entry
+            phones = self.scanner.get_phones()
+            phone = phones.get(device_id)
+            if phone:
+                self.config.upsert_phone(PhoneConfig(
+                    device_id=device_id,
+                    display_name=phone.display_name,
+                    auto_mount=enabled,
+                ))
+
     def _handle_change_pass(self, phone: DiscoveredPhone):
         self._show_password_dialog(phone)
 
     # ─── Settings ─────────────────────────────────────────────
 
+    def _fetch_phone_statuses(self):
+        """Fetch storage/status info from all discovered phones via REST API."""
+        phones = self.scanner.get_phones()
+        for device_id, phone in phones.items():
+            try:
+                url = f"{phone.webdav_url}/phonebridge/status"
+                req = urllib.request.Request(url, method="GET")
+
+                # Add auth if available
+                phone_config = self.config.get_phone(device_id)
+                if phone_config and phone_config.auth_password:
+                    import base64
+                    user = phone_config.auth_user or "phonebridge"
+                    creds = base64.b64encode(f"{user}:{phone_config.auth_password}".encode()).decode()
+                    req.add_header("Authorization", f"Basic {creds}")
+
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+
+                with urllib.request.urlopen(req, timeout=3, context=ctx) as resp:
+                    data = json.loads(resp.read().decode())
+                    self._phone_statuses[device_id] = data
+            except Exception as e:
+                logger.debug(f"Failed to fetch status for {device_id}: {e}")
+
     def _open_settings(self):
         settings_win = ctk.CTkToplevel(self)
         settings_win.title("PhoneBridge Settings")
-        settings_win.geometry("400x350")
+        settings_win.geometry("400x420")
         settings_win.configure(fg_color=COLOR_BG)
         settings_win.transient(self)
         settings_win.grab_set()
@@ -647,6 +789,33 @@ class PhoneBridgeApp(ctk.CTk):
             ctk.CTkLabel(row, text="Installed" if installed else "Not found",
                          font=ctk.CTkFont(size=12),
                          text_color=COLOR_TEXT_SEC).pack(side="right")
+
+        # About section
+        ctk.CTkLabel(settings_win, text="About",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=COLOR_TEXT_SEC).pack(padx=24, pady=(16, 8), anchor="w")
+
+        about_frame = ctk.CTkFrame(settings_win, fg_color=COLOR_CARD, corner_radius=10)
+        about_frame.pack(fill="x", padx=24, pady=(0, 16))
+
+        ctk.CTkLabel(about_frame, text=f"PhoneBridge v{__version__}",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=COLOR_TEXT).pack(padx=16, pady=(12, 2), anchor="w")
+        ctk.CTkLabel(about_frame, text="Mount phone storage as Windows drive letters — wirelessly.",
+                     font=ctk.CTkFont(size=12),
+                     text_color=COLOR_TEXT_SEC).pack(padx=16, anchor="w")
+        ctk.CTkLabel(about_frame, text="License: GNU GPL v3.0",
+                     font=ctk.CTkFont(size=11),
+                     text_color=COLOR_TEXT_SEC).pack(padx=16, anchor="w")
+
+        link_frame = ctk.CTkFrame(about_frame, fg_color="transparent")
+        link_frame.pack(fill="x", padx=16, pady=(4, 12))
+        ctk.CTkButton(
+            link_frame, text="GitHub →", width=80,
+            fg_color="transparent", hover_color="#30363d",
+            text_color=COLOR_ACCENT, font=ctk.CTkFont(size=12),
+            command=lambda: webbrowser.open("https://github.com/ysachin26/PhoneBridge"),
+        ).pack(side="left")
 
     def _set_notifications(self, enabled):
         self.config.config.show_notifications = enabled

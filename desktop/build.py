@@ -49,6 +49,10 @@ def main():
         # Collect all customtkinter assets (themes, etc)
         "--collect-all=customtkinter",
         "--collect-all=zeroconf",
+        # Icon
+        "--icon=assets/icon.png",
+        # Bundle assets
+        "--add-data=assets;assets",
         # Entry point
         "run_phonebridge.py",
     ]

@@ -40,3 +40,9 @@ desktop/phonebridge/config_local.json
 
 # PyInstaller
 *.spec
+
+# Installer output
+desktop/installer/
+
+# App logs
+app_log.txt

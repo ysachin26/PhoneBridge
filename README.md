@@ -1,5 +1,3 @@
- 
-
 <h1 align="center">PhoneBridge</h1>
 <p align="center">
   <strong>Mount your phone storage as a real drive letter — wirelessly, with one click.</strong>
@@ -10,7 +8,9 @@
   <a href="#how-it-works">How It Works</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
+  <a href="#security">Security</a> •
   <a href="#building-from-source">Build</a> •
+  <a href="#troubleshooting">Troubleshooting</a> •
   <a href="#contributing">Contributing</a> •
   <a href="#license">License</a>
 </p>
@@ -21,48 +21,105 @@
 
 - 📱 **One-click mount** — Phone storage appears as E:, F:, G: drives in Windows Explorer
 - 📡 **Wireless** — No USB cable needed, works over Wi-Fi
-- 🔍 **Auto-discovery** — Phones are detected automatically via mDNS
+- 🔍 **Auto-discovery** — Phones are detected automatically via mDNS/DNS-SD
 - 📱📱📱 **Multi-phone** — Mount multiple phones simultaneously as separate drive letters
+- 🔒 **Encrypted** — All transfers secured with HTTPS/TLS (self-signed certificate)
+- 🔑 **Authenticated** — Password-protected access with HTTP Basic Auth
+- 📊 **Live stats** — Real-time transfer speed, storage usage, and connection monitoring
+- 📂 **Selective sharing** — Choose which folders to share (All, DCIM, Downloads, Music)
+- 🚀 **Auto-start** — Starts automatically with Windows and Android boot
+- 🔄 **Auto-reconnect** — Resilient connection handling with automatic re-mount
+- 🖥️ **Modern UI** — Desktop GUI with system tray + Material 3 Android interface
 - 🔓 **Open source** — Free forever, GPL v3 licensed
 - 🔒 **Private** — Direct phone-to-PC connection, no cloud, no middleman
 
 ## How It Works
 
 ```
-┌──────────────┐         Wi-Fi / LAN          ┌──────────────┐
-│  Android App │ ◄──── WebDAV over HTTP ────► │  PC Tray App │
-│  (Server)    │ ◄──── mDNS Discovery   ────► │  (Client)    │
-│              │                               │              │
-│  NanoHTTPD   │                               │  rclone      │
-│  WebDAV :8273│                               │  → E: drive  │
-└──────────────┘                               └──────────────┘
+┌──────────────────┐       Wi-Fi / LAN        ┌───────────────────┐
+│   Android App    │ ◄── WebDAV over HTTPS ──► │   PC Client App   │
+│   (Server)       │ ◄── mDNS Discovery   ──► │   (GUI + Tray)    │
+│                  │                           │                   │
+│   NanoHTTPD      │                           │   rclone mount    │
+│   WebDAV :8273   │                           │   → E: drive      │
+│   TLS + Auth     │                           │   customtkinter   │
+└──────────────────┘                           └───────────────────┘
 ```
 
-1. **Android app** runs a lightweight WebDAV file server in the background
-2. **PC tray app** discovers phones on the network via mDNS
-3. Click "Mount" → rclone maps the phone's WebDAV to a real drive letter
-4. Browse, copy, open files in Windows Explorer — just like C: or D:
+1. **Android app** runs a WebDAV file server with HTTPS encryption and password protection
+2. **PC client** discovers phones on the network automatically via mDNS
+3. Enter the connection code shown on your phone → rclone maps it to a real drive letter
+4. Browse, copy, and open files in Windows Explorer — just like C: or D:
 
 ## Installation
 
 ### PC App (Windows)
-1. Download the latest release from [Releases](https://github.com/ysachin26/PhoneBridge/releases)
-2. Install [WinFsp](https://winfsp.dev/rel/) (required for drive mounting)
-3. Install [rclone](https://rclone.org/downloads/) and add it to your PATH
-4. Run `PhoneBridge.exe`
+
+**Option A: Installer (recommended)**
+1. Download `PhoneBridge_Setup.exe` from [Releases](https://github.com/ysachin26/PhoneBridge/releases)
+2. Run the installer — it will set up everything automatically
+3. Install [WinFsp](https://winfsp.dev/rel/) if not already installed
+4. Install [rclone](https://rclone.org/downloads/) and add it to your PATH
+
+**Option B: Portable**
+1. Download `PhoneBridge.exe` from [Releases](https://github.com/ysachin26/PhoneBridge/releases)
+2. Install [WinFsp](https://winfsp.dev/rel/) and [rclone](https://rclone.org/downloads/)
+3. Run `PhoneBridge.exe`
 
 ### Android App
 1. Download the APK from [Releases](https://github.com/ysachin26/PhoneBridge/releases)
-2. Install and grant storage permissions
-3. Tap "Start Server"
+2. Install and grant storage + notification permissions
+3. Tap the power button to start sharing
 
 ## Usage
 
-1. Open PhoneBridge on your Android phone → tap **Start**
-2. On your PC, PhoneBridge tray icon will show the phone automatically
-3. Right-click tray icon → click your phone name → **Mount**
-4. Open Windows Explorer → your phone appears as a new drive letter
-5. Done! Browse files, drag-and-drop, open directly from apps
+1. **Phone**: Open PhoneBridge → tap the **power button** to start the server
+2. **PC**: PhoneBridge discovers your phone automatically (system tray + GUI window)
+3. **Connect**: Click **Mount Drive** → enter the connection code shown on your phone
+4. **Browse**: Open Windows Explorer → your phone appears as a new drive letter (e.g., E:)
+5. **Done!** Browse files, drag-and-drop, open directly from any app
+
+### Android UI
+- **Toggle button** with pulse animation when server is active
+- **Live stats dashboard** — upload/download speeds, uptime, active connections
+- **Storage bar** — visual indicator of phone storage usage
+- **Folder selection** — share All Storage, DCIM, Downloads, or Music
+- **Password management** — copy or regenerate the connection code
+- **Auto-start toggle** — automatically start when phone boots
+
+### Desktop UI
+- **Device cards** — see all discovered phones with status, storage info, and actions
+- **System tray** — mount/unmount from the tray icon, even without the main window
+- **Settings** — start with Windows, notification preferences, VFS cache mode
+- **Auto-mount** — automatically mount saved phones when detected
+
+## Security
+
+PhoneBridge uses multiple layers of security for all connections:
+
+| Layer | Implementation |
+|-------|---------------|
+| **Transport Encryption** | HTTPS with self-signed TLS certificate (Bouncy Castle, 2048-bit RSA) |
+| **Authentication** | HTTP Basic Auth with auto-generated 8-character password |
+| **Password Storage** | SharedPreferences (Android), config.json (Desktop) |
+| **Certificate Persistence** | PKCS12 keystore in app private storage — stable fingerprint |
+| **mDNS Advertisement** | `auth_required=true` TXT record — desktop knows to prompt for password |
+| **Password Rotation** | On-demand regeneration from the Android UI |
+
+> **Note:** Since the certificate is self-signed, the desktop client uses `--no-check-certificate` with rclone. This is standard for LAN-only self-signed setups.
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Android Server | Kotlin + NanoHTTPD (WebDAV) |
+| Android TLS | Bouncy Castle (bcprov/bcpkix-jdk18on) |
+| PC Client GUI | Python + customtkinter |
+| PC System Tray | Python + pystray |
+| Discovery | mDNS/DNS-SD (NsdManager + zeroconf) |
+| Mounting | rclone + WinFsp |
+| Protocol | WebDAV over HTTPS with Basic Auth |
+| Build (Desktop) | PyInstaller + Inno Setup |
 
 ## Building from Source
 
@@ -70,7 +127,12 @@
 ```bash
 cd desktop
 pip install -r requirements.txt
+
+# Run directly
 python -m phonebridge.main
+
+# Build .exe
+python build.py
 ```
 
 ### Android App
@@ -79,27 +141,51 @@ cd android
 ./gradlew assembleDebug
 ```
 
-## Tech Stack
+## Troubleshooting
 
-| Component | Technology |
-|-----------|-----------|
-| Android Server | Kotlin + NanoHTTPD (WebDAV) |
-| PC Client | Python + pystray + rclone |
-| Discovery | mDNS/DNS-SD (NsdManager + zeroconf) |
-| Mounting | rclone + WinFsp |
-| Protocol | WebDAV over HTTP |
+### Phone not detected on PC
+- Ensure both devices are on the **same Wi-Fi network**
+- Check that **PhoneBridge is running** on your Android phone (green toggle)
+- Try clicking **Rescan Network** in the PC app
+- Check your firewall is not blocking **port 8273** or mDNS (port 5353)
+
+### Mount fails or shows "Server Not Running"
+- Verify the server is active on your phone (check the notification)
+- Make sure **rclone** is installed and in your PATH
+- Make sure **WinFsp** is installed (required for drive letter mapping)
+
+### Wrong Password error
+- The connection code is displayed on the phone screen — enter it exactly
+- If the code was regenerated, the PC will prompt for the new one
+- Try the **Change Password** option in the PC app to re-enter
+
+### Drive letter not appearing in Explorer
+- Wait a few seconds after mounting — rclone needs time to initialize
+- Check if the drive appears in `This PC` or by navigating to `E:\` directly
+- Try unmounting and re-mounting
+
+### Slow transfer speeds
+- Ensure you're on a **5GHz Wi-Fi** network (not 2.4GHz)
+- Close other bandwidth-heavy applications
+- Check the VFS cache mode in settings (set to "full" for best performance)
 
 ## Roadmap
 
-- [x] Phase 1: LAN mounting (same Wi-Fi)
-- [ ] Phase 2: Remote access via Tailscale (phone anywhere)
-- [ ] Phase 3: Unified file browser across all phones
+- [x] Phase 1: LAN mounting (same Wi-Fi) with HTTPS + Auth
+- [x] Phase 2: Modern UI, live stats, selective folder sharing
+- [ ] Phase 3: Remote access via Tailscale/WireGuard
 - [ ] Phase 4: Linux & macOS PC support
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and pull request guidelines.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">
+  Made with ❤️ by <a href="https://github.com/ysachin26">Sachin Yadav</a>
+</p>
