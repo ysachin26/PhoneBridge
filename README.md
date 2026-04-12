@@ -21,15 +21,8 @@
 
 - 📱 **One-click mount** — Phone storage appears as E:, F:, G: drives in Windows Explorer
 - 📡 **Wireless** — No USB cable needed, works over Wi-Fi
-- 🔍 **Auto-discovery** — Phones are detected automatically via mDNS/DNS-SD
+- 🔍 **Auto-discovery** — Phones are detected automatically via mDNS
 - 📱📱📱 **Multi-phone** — Mount multiple phones simultaneously as separate drive letters
-- 🔒 **Encrypted** — All transfers secured with HTTPS/TLS (self-signed certificate)
-- 🔑 **Authenticated** — Password-protected access with HTTP Basic Auth
-- 📊 **Live stats** — Real-time transfer speed, storage usage, and connection monitoring
-- 📂 **Selective sharing** — Choose which folders to share (All, DCIM, Downloads, Music)
-- 🚀 **Auto-start** — Starts automatically with Windows and Android boot
-- 🔄 **Auto-reconnect** — Resilient connection handling with automatic re-mount
-- 🖥️ **Modern UI** — Desktop GUI with system tray + Material 3 Android interface
 - 🔓 **Open source** — Free forever, GPL v3 licensed
 - 🔒 **Private** — Direct phone-to-PC connection, no cloud, no middleman
 
