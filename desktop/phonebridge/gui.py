@@ -654,6 +654,8 @@ class PhoneBridgeApp(ctk.CTk):
                          font=ctk.CTkFont(size=15), text_color=COLOR_TEXT_SEC).pack()
             ctk.CTkLabel(empty, text="Make sure PhoneBridge is running on your Android device",
                          font=ctk.CTkFont(size=12), text_color="#484f58").pack(pady=(4, 0))
+            ctk.CTkLabel(empty, text="Not on the same network? Click \"🌐 Connect\" above to connect by IP",
+                         font=ctk.CTkFont(size=12), text_color="#484f58").pack(pady=(8, 0))
             empty.pack(fill="both", expand=True)
             return
 
@@ -872,7 +874,7 @@ class PhoneBridgeApp(ctk.CTk):
     def _open_settings(self):
         settings_win = ctk.CTkToplevel(self)
         settings_win.title("PhoneBridge Settings")
-        settings_win.geometry("400x420")
+        settings_win.geometry("440x620")
         settings_win.configure(fg_color=COLOR_BG)
         settings_win.transient(self)
         settings_win.grab_set()
@@ -914,6 +916,58 @@ class PhoneBridgeApp(ctk.CTk):
         )
         cache_menu.set(self.config.config.vfs_cache_mode)
         cache_menu.pack(side="right", padx=16, pady=12)
+
+        # Remote Access
+        ctk.CTkLabel(settings_win, text="Remote Access",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=COLOR_TEXT_SEC).pack(padx=24, pady=(16, 8), anchor="w")
+
+        remote_frame = ctk.CTkFrame(settings_win, fg_color=COLOR_CARD, corner_radius=10)
+        remote_frame.pack(fill="x", padx=24)
+
+        # Check Tailscale status
+        from .tailscale import is_tailscale_installed
+        ts_installed = is_tailscale_installed()
+
+        ts_row = ctk.CTkFrame(remote_frame, fg_color="transparent")
+        ts_row.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(ts_row,
+                     text=f"{'✅' if ts_installed else '○'}  VPN Tunnel (Tailscale)",
+                     font=ctk.CTkFont(size=13),
+                     text_color=COLOR_GREEN if ts_installed else COLOR_TEXT_SEC,
+        ).pack(side="left")
+        ctk.CTkLabel(ts_row,
+                     text="Ready" if ts_installed else "Not set up",
+                     font=ctk.CTkFont(size=12),
+                     text_color=COLOR_GREEN if ts_installed else COLOR_TEXT_SEC,
+        ).pack(side="right")
+
+        if not ts_installed:
+            guide_text = (
+                "To access your phone from any network:\n"
+                "1. Download Tailscale (free) on this PC and your phone\n"
+                "2. Sign in with the same Google account on both\n"
+                "3. PhoneBridge will auto-discover your phone remotely"
+            )
+            ctk.CTkLabel(remote_frame, text=guide_text,
+                         font=ctk.CTkFont(size=11),
+                         text_color=COLOR_TEXT_SEC,
+                         justify="left",
+                         wraplength=380,
+            ).pack(padx=16, pady=(4, 4), anchor="w")
+
+            ctk.CTkButton(
+                remote_frame, text="Set Up Remote Access", width=200,
+                fg_color=COLOR_ACCENT, hover_color="#818cf8",
+                font=ctk.CTkFont(size=12),
+                command=lambda: webbrowser.open("https://tailscale.com/download"),
+            ).pack(padx=16, pady=(4, 12))
+        else:
+            ctk.CTkLabel(remote_frame,
+                         text="Remote phones are auto-discovered on your VPN network.",
+                         font=ctk.CTkFont(size=11),
+                         text_color=COLOR_TEXT_SEC,
+            ).pack(padx=16, pady=(4, 12), anchor="w")
 
         # Dependencies
         ctk.CTkLabel(settings_win, text="Dependencies",

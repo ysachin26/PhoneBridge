@@ -21,7 +21,8 @@
 
 - **One-click mount** — Phone storage appears as E:, F:, G: drives in Windows Explorer
 - **Wireless** — No USB cable needed, works over Wi-Fi
-- **Auto-discovery** — Phones are detected automatically via mDNS
+- **Remote access** — Connect from any network with built-in VPN tunnel setup
+- **Auto-discovery** — Phones are detected automatically via mDNS + Tailscale
 - **Multi-phone** — Mount multiple phones simultaneously as separate drive letters
 - **Open source** — Free forever, GPL v3 licensed
 - **Private** — Direct phone-to-PC connection, no cloud, no middleman
@@ -85,6 +86,26 @@
 - **System tray** — mount/unmount from the tray icon, even without the main window
 - **Settings** — start with Windows, notification preferences, VFS cache mode
 - **Auto-mount** — automatically mount saved phones when detected
+
+## Remote Access
+
+PhoneBridge includes built-in support for remote access — connect to your phone from **any network** (different Wi-Fi, mobile data, office, etc.).
+
+### One-Time Setup (~2 minutes)
+
+1. **On your phone**: Open PhoneBridge → scroll to "Remote Access" → tap **Set Up Remote Access**
+2. **Follow the prompts**: Install the free VPN tunnel and sign in with Google
+3. **On your PC**: Open PhoneBridge Settings → click **Set Up Remote Access** (same Google account)
+4. **Done!** Your phone now appears automatically — even from different networks
+
+### Manual Connection
+
+If you prefer not to use auto-discovery, you can connect by IP address directly:
+
+1. **On your phone**: Note the remote address shown in the Remote Access card (e.g., `100.64.0.2:8273`)
+2. **On your PC**: Click **🌐 Connect** → enter the address and connection code
+
+> **How it works:** PhoneBridge uses [Tailscale](https://tailscale.com) (free, open-source) to create a private VPN tunnel between your devices. No port forwarding, no cloud servers, no data limits. Your files travel directly between phone and PC.
 
 ## Security
 
@@ -157,16 +178,23 @@ cd android
 - Check if the drive appears in `This PC` or by navigating to `E:\` directly
 - Try unmounting and re-mounting
 
+### Remote access not working
+- Make sure both devices have the VPN tunnel active (check the Tailscale app)
+- Verify both devices are signed in with the **same account**
+- Try connecting manually: click **🌐 Connect** in the PC app → enter the remote IP shown on your phone
+- Check that PhoneBridge is running on your phone (green toggle)
+
 ### Slow transfer speeds
 - Ensure you're on a **5GHz Wi-Fi** network (not 2.4GHz)
 - Close other bandwidth-heavy applications
 - Check the VFS cache mode in settings (set to "full" for best performance)
+- For remote connections, speed depends on both devices' internet upload speed
 
 ## Roadmap
 
 - [x] Phase 1: LAN mounting (same Wi-Fi) with HTTPS + Auth
 - [x] Phase 2: Modern UI, live stats, selective folder sharing
-- [ ] Phase 3: Remote access via Tailscale/WireGuard
+- [x] Phase 3: Remote access with built-in VPN tunnel setup
 - [ ] Phase 4: Linux & macOS PC support
 
 ## Contributing

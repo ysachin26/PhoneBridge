@@ -553,7 +553,7 @@
                     android:focusable="true" />
             </LinearLayout>
 
-            <!-- Tailscale not installed state -->
+            <!-- Remote access not configured — Setup Guide -->
             <LinearLayout
                 android:id="@+id/layoutTailscaleNotInstalled"
                 android:layout_width="match_parent"
@@ -564,32 +564,127 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Access your files from anywhere"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_secondary"
-                    android:layout_marginBottom="4dp" />
+                    android:text="Enable Remote Access"
+                    android:textSize="15sp"
+                    android:textColor="@color/text_primary"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="6dp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Install Tailscale VPN on both devices to connect from any network — no port forwarding needed."
+                    android:text="Access your files from any Wi-Fi, mobile data, or remote network. One-time setup takes about 2 minutes."
                     android:textSize="12sp"
                     android:textColor="@color/text_muted"
                     android:lineSpacingExtra="2dp"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="16dp" />
 
+                <!-- Step 1 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="10dp">
+
+                    <TextView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:gravity="center"
+                        android:text="1"
+                        android:textSize="12sp"
+                        android:textColor="@color/bg_card"
+                        android:fontFamily="sans-serif-medium"
+                        android:background="@drawable/bg_chip_selected" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Set up the free VPN tunnel on this phone"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_secondary"
+                        android:layout_marginStart="12dp" />
+                </LinearLayout>
+
+                <!-- Step 2 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="10dp">
+
+                    <TextView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:gravity="center"
+                        android:text="2"
+                        android:textSize="12sp"
+                        android:textColor="@color/bg_card"
+                        android:fontFamily="sans-serif-medium"
+                        android:background="@drawable/bg_chip_selected" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Sign in with Google (same account on both devices)"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_secondary"
+                        android:layout_marginStart="12dp" />
+                </LinearLayout>
+
+                <!-- Step 3 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="16dp">
+
+                    <TextView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:gravity="center"
+                        android:text="3"
+                        android:textSize="12sp"
+                        android:textColor="@color/bg_card"
+                        android:fontFamily="sans-serif-medium"
+                        android:background="@drawable/bg_chip_selected" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Repeat on your PC — that's it, you're connected forever"
+                        android:textSize="13sp"
+                        android:textColor="@color/text_secondary"
+                        android:layout_marginStart="12dp" />
+                </LinearLayout>
+
+                <!-- CTA Button -->
                 <TextView
                     android:id="@+id/btnGetTailscale"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="44dp"
                     android:gravity="center"
-                    android:text="Get Tailscale →"
-                    android:textSize="13sp"
-                    android:textColor="@color/accent"
+                    android:text="Set Up Remote Access"
+                    android:textSize="14sp"
+                    android:textColor="@color/bg_card"
                     android:fontFamily="sans-serif-medium"
-                    android:background="@drawable/bg_chip"
+                    android:background="@drawable/bg_chip_selected"
                     android:clickable="true"
                     android:focusable="true" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="Uses Tailscale · Free · No data limits · Open source"
+                    android:textSize="10sp"
+                    android:textColor="@color/text_hint"
+                    android:layout_marginTop="8dp" />
             </LinearLayout>
 
         </LinearLayout>
