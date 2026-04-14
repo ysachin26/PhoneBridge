@@ -32,10 +32,48 @@ SCAN_INTERVAL = 30
 # Timeout for probing each peer (seconds)
 PROBE_TIMEOUT = 3
 
+# Cached path to the tailscale CLI binary
+_tailscale_path: Optional[str] = None
+
+
+def _find_tailscale() -> Optional[str]:
+    """
+    Find the Tailscale CLI binary.
+    
+    Checks PATH first, then common Windows install locations.
+    Caches the result for subsequent calls.
+    """
+    global _tailscale_path
+    if _tailscale_path is not None:
+        return _tailscale_path if _tailscale_path else None
+    
+    # Check PATH first
+    found = shutil.which("tailscale")
+    if found:
+        _tailscale_path = found
+        return found
+    
+    # Check common Windows install paths
+    if sys.platform == "win32":
+        import os
+        candidates = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Tailscale", "tailscale.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Tailscale", "tailscale.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Tailscale", "tailscale.exe"),
+        ]
+        for path in candidates:
+            if path and os.path.isfile(path):
+                _tailscale_path = path
+                logger.info(f"Found Tailscale CLI at: {path}")
+                return path
+    
+    _tailscale_path = ""  # Cache negative result (empty string = not found)
+    return None
+
 
 def is_tailscale_installed() -> bool:
-    """Check if the Tailscale CLI is available in PATH."""
-    return shutil.which("tailscale") is not None
+    """Check if the Tailscale CLI is available."""
+    return _find_tailscale() is not None
 
 
 def get_tailscale_status() -> Optional[dict]:
@@ -45,9 +83,13 @@ def get_tailscale_status() -> Optional[dict]:
     Returns the parsed JSON dict, or None if Tailscale is not
     installed, not running, or the command fails.
     """
+    ts_bin = _find_tailscale()
+    if not ts_bin:
+        return None
+    
     try:
         result = subprocess.run(
-            ["tailscale", "status", "--json"],
+            [ts_bin, "status", "--json"],
             capture_output=True,
             text=True,
             timeout=10,
