@@ -171,6 +171,7 @@ class WebDavServer(
         val totalSpace = rootDir.totalSpace
         val freeSpace = rootDir.freeSpace
         val usedSpace = totalSpace - freeSpace
+        val tailscaleIp = getTailscaleIp()
 
         val json = """
         {
@@ -182,13 +183,43 @@ class WebDavServer(
             "active_connections": ${stats.activeConnections},
             "storage_total": $totalSpace,
             "storage_used": $usedSpace,
-            "storage_free": $freeSpace
+            "storage_free": $freeSpace,
+            "tailscale_ip": ${if (tailscaleIp != null) "\"$tailscaleIp\"" else "null"}
         }
         """.trimIndent()
 
         val response = newFixedLengthResponse(Response.Status.OK, "application/json", json)
         response.addHeader("Cache-Control", "no-cache")
         return response
+    }
+
+    /**
+     * Detect the Tailscale VPN IP address (100.x.y.z) if active.
+     */
+    private fun getTailscaleIp(): String? {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (!iface.isUp) continue
+                val name = iface.name.lowercase()
+                if (!(name.startsWith("tun") || name.startsWith("tailscale") || name.startsWith("wg"))) continue
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (addr is java.net.Inet4Address) {
+                        val ip = addr.hostAddress ?: continue
+                        val parts = ip.split(".")
+                        if (parts.size == 4) {
+                            val first = parts[0].toIntOrNull() ?: continue
+                            val second = parts[1].toIntOrNull() ?: continue
+                            if (first == 100 && second in 64..127) return ip
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
     }
 
     // ─── OPTIONS ─────────────────────────────────────────────────

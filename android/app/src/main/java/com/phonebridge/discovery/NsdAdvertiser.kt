@@ -35,7 +35,8 @@ class NsdAdvertiser(private val context: Context) {
         deviceName: String,
         authRequired: Boolean = true,
         authUser: String = "phonebridge",
-        protocol: String = "https"
+        protocol: String = "https",
+        tailscaleIp: String? = null
     ) {
         if (isRegistered) {
             Log.w(TAG, "Already registered — unregister first")
@@ -60,6 +61,12 @@ class NsdAdvertiser(private val context: Context) {
             setAttribute("auth_required", authRequired.toString())
             setAttribute("auth_user", authUser)
             setAttribute("protocol", protocol)
+
+            // Remote access: Tailscale IP (if detected)
+            if (!tailscaleIp.isNullOrEmpty()) {
+                setAttribute("tailscale_ip", tailscaleIp)
+                Log.i(TAG, "🌐 Advertising Tailscale IP in mDNS: $tailscaleIp")
+            }
         }
 
         registrationListener = object : NsdManager.RegistrationListener {

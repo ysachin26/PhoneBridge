@@ -5,8 +5,12 @@ Provides the system tray icon with phone discovery status,
 mount/unmount controls, and notifications.
 """
 
+import json
 import logging
+import ssl
 import threading
+import urllib.request
+import urllib.error
 import webbrowser
 from typing import Optional, Callable
 
@@ -312,6 +316,13 @@ class TrayIcon:
         items.append(Menu.SEPARATOR)
 
         # ─── Global Actions ────────────────────────────────────
+        items.append(MenuItem(
+            "🌐 Connect Manually...",
+            lambda: threading.Thread(
+                target=self._manual_connect, daemon=True
+            ).start(),
+        ))
+
         if n_mounted > 0:
             items.append(MenuItem(
                 f"⏏ Unmount All ({n_mounted})",
@@ -524,6 +535,99 @@ class TrayIcon:
     def _start_scanner(self):
         """Start the mDNS scanner."""
         self.scanner.start()
+
+    # ─── Manual Connect ────────────────────────────────────────────
+
+    def _manual_connect(self):
+        """Prompt user for IP:port and password, then connect manually."""
+        import subprocess
+        import sys
+
+        if sys.platform != "win32":
+            return
+
+        # Step 1: Ask for address (IP:port)
+        ps_address = '''
+Add-Type -AssemblyName Microsoft.VisualBasic
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$result = [Microsoft.VisualBasic.Interaction]::InputBox(
+    "Enter the IP address (or IP:port) of your phone.`n`nExamples:`n  100.64.0.2`n  100.64.0.2:8273`n  my-phone.tail1234.ts.net",
+    "PhoneBridge - Connect Manually",
+    ""
+)
+if ($result) { Write-Output $result } else { Write-Output "" }
+'''
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_address],
+                capture_output=True, text=True, timeout=120,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            address_input = proc.stdout.strip()
+            if not address_input:
+                return
+        except Exception as e:
+            logger.error(f"Manual connect dialog error: {e}")
+            return
+
+        # Parse IP:port
+        if ":" in address_input:
+            parts = address_input.rsplit(":", 1)
+            ip = parts[0]
+            try:
+                port = int(parts[1])
+            except ValueError:
+                ip = address_input
+                port = 8273
+        else:
+            ip = address_input
+            port = 8273
+
+        # Step 2: Ask for password
+        password = _ask_password(f"Phone at {ip}:{port}")
+        if not password:
+            self._notify("Connect Cancelled", "No password provided.")
+            return
+
+        # Step 3: Verify connection
+        phone = DiscoveredPhone.create_manual(ip_address=ip, port=port)
+        url = f"{phone.webdav_url}/phonebridge/status"
+        req = urllib.request.Request(url, method="GET")
+        import base64
+        creds = base64.b64encode(f"phonebridge:{password}".encode()).decode()
+        req.add_header("Authorization", f"Basic {creds}")
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        try:
+            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                data = json.loads(resp.read().decode())
+                logger.info(f"Manual connect verified: {ip}:{port}")
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                self._notify("Wrong Password", "The connection code is incorrect.")
+            else:
+                self._notify("Connection Error", f"Server returned HTTP {e.code}")
+            return
+        except Exception as e:
+            self._notify("Connection Failed", f"Could not reach {ip}:{port}\n{e}")
+            return
+
+        # Step 4: Add to discovered list and mount
+        with self._lock:
+            self._discovered[phone.device_id] = phone
+
+        # Mount the phone
+        self._mount_phone(phone)
+        # Save the password for this phone
+        phone_config = self.config.get_phone(phone.device_id)
+        if phone_config:
+            phone_config.connection_type = "manual"
+            phone_config.protocol = phone.protocol
+            self.config.upsert_phone(phone_config)
 
     # ─── Callbacks ─────────────────────────────────────────────────
 

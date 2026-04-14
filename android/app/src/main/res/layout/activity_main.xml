@@ -465,6 +465,135 @@
 
         </LinearLayout>
 
+        <!-- ═══ Remote Access Card ═══ -->
+        <LinearLayout
+            android:id="@+id/cardRemoteAccess"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_card"
+            android:padding="20dp"
+            android:layout_marginTop="12dp"
+            android:elevation="1dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="REMOTE ACCESS"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_muted"
+                    android:letterSpacing="0.1" />
+
+                <!-- Status indicator -->
+                <TextView
+                    android:id="@+id/tvRemoteStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="● Connected"
+                    android:textSize="12sp"
+                    android:textColor="@color/active_green"
+                    android:fontFamily="sans-serif-medium" />
+            </LinearLayout>
+
+            <!-- Tailscale IP available state -->
+            <LinearLayout
+                android:id="@+id/layoutTailscaleAvailable"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Remote address"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_muted"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/tvTailscaleIp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="100.x.y.z:8273"
+                    android:textSize="18sp"
+                    android:textColor="@color/text_primary"
+                    android:fontFamily="monospace"
+                    android:textIsSelectable="true"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Use this address to connect from any network"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_hint"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:id="@+id/btnCopyTailscaleIp"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:text="📋 Copy Remote Address"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_chip"
+                    android:clickable="true"
+                    android:focusable="true" />
+            </LinearLayout>
+
+            <!-- Tailscale not installed state -->
+            <LinearLayout
+                android:id="@+id/layoutTailscaleNotInstalled"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Access your files from anywhere"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Install Tailscale VPN on both devices to connect from any network — no port forwarding needed."
+                    android:textSize="12sp"
+                    android:textColor="@color/text_muted"
+                    android:lineSpacingExtra="2dp"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:id="@+id/btnGetTailscale"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:gravity="center"
+                    android:text="Get Tailscale →"
+                    android:textSize="13sp"
+                    android:textColor="@color/accent"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_chip"
+                    android:clickable="true"
+                    android:focusable="true" />
+            </LinearLayout>
+
+        </LinearLayout>
+
         <!-- ═══ Settings ═══ -->
         <LinearLayout
             android:layout_width="match_parent"

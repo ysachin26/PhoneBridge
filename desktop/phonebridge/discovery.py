@@ -31,10 +31,14 @@ class DiscoveredPhone:
     auth_required: bool = True   # Whether Basic Auth is required
     auth_user: str = "phonebridge"  # Username for Basic Auth
     protocol: str = "https"      # "http" or "https"
+    tailscale_ip: str = ""       # Tailscale IP (from mDNS TXT or status API)
+    connection_type: str = "auto"  # "auto" or "manual"
 
     @property
     def device_id(self) -> str:
         """Unique identifier derived from service name."""
+        if self.connection_type == "manual":
+            return f"manual_{self.ip_address}_{self.port}"
         return self.service_name.replace(f".{SERVICE_TYPE}", "").strip()
 
     @property
@@ -42,9 +46,37 @@ class DiscoveredPhone:
         """Full WebDAV URL for rclone."""
         return f"{self.protocol}://{self.ip_address}:{self.port}"
 
+    @classmethod
+    def create_manual(cls, ip_address: str, port: int = 8273,
+                      protocol: str = "https",
+                      display_name: str = "",
+                      password: str = "") -> "DiscoveredPhone":
+        """
+        Factory method to create a DiscoveredPhone from manual IP input.
+        
+        Used when connecting to a phone that isn't on the local network
+        (e.g., via Tailscale or any VPN).
+        """
+        if not display_name:
+            display_name = f"Phone ({ip_address})"
+        
+        return cls(
+            service_name=f"manual_{ip_address}_{port}",
+            display_name=display_name,
+            ip_address=ip_address,
+            port=port,
+            device_model="Manual Connection",
+            version="",
+            auth_required=True,
+            auth_user="phonebridge",
+            protocol=protocol,
+            connection_type="manual",
+        )
+
     def __str__(self):
         auth_status = "🔒" if self.auth_required else "🔓"
-        return f"{self.display_name} ({self.protocol}://{self.ip_address}:{self.port}) {auth_status}"
+        remote = f" 🌐{self.tailscale_ip}" if self.tailscale_ip else ""
+        return f"{self.display_name} ({self.protocol}://{self.ip_address}:{self.port}) {auth_status}{remote}"
 
 
 class PhoneDiscoveryListener(ServiceListener):
@@ -112,6 +144,7 @@ class PhoneDiscoveryListener(ServiceListener):
         auth_required = properties.get("auth_required", "true").lower() == "true"
         auth_user = properties.get("auth_user", "phonebridge")
         protocol = properties.get("protocol", "http")
+        tailscale_ip = properties.get("tailscale_ip", "")
 
         phone = DiscoveredPhone(
             service_name=name,
@@ -123,6 +156,7 @@ class PhoneDiscoveryListener(ServiceListener):
             auth_required=auth_required,
             auth_user=auth_user,
             protocol=protocol,
+            tailscale_ip=tailscale_ip,
         )
 
         logger.info(f"Resolved: {phone}")

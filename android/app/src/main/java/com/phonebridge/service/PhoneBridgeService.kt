@@ -59,6 +59,10 @@ class PhoneBridgeService : Service() {
         const val EXTRA_STORAGE_USED = "storage_used"
         const val EXTRA_STORAGE_FREE = "storage_free"
 
+        // Remote access extras
+        const val EXTRA_TAILSCALE_IP = "tailscale_ip"
+        const val EXTRA_IS_REMOTE_AVAILABLE = "is_remote_available"
+
         private const val STATS_INTERVAL_MS = 2000L  // Broadcast stats every 2 seconds
     }
 
@@ -146,13 +150,15 @@ class PhoneBridgeService : Service() {
 
             // Start mDNS advertiser with auth and protocol info
             val deviceName = getDeviceName()
+            val tailscaleIp = getTailscaleIpAddress()
             nsdAdvertiser = NsdAdvertiser(this)
             nsdAdvertiser?.register(
                 port = port,
                 deviceName = deviceName,
                 authRequired = true,
                 authUser = ServerConfig.AUTH_USERNAME,
-                protocol = protocol
+                protocol = protocol,
+                tailscaleIp = tailscaleIp
             )
 
             isRunning = true
@@ -262,6 +268,8 @@ class PhoneBridgeService : Service() {
         val stats = webDavServer?.getStats()
         val storageRoot = getStorageRoot()
 
+        val tailscaleIp = getTailscaleIpAddress()
+
         val intent = Intent(BROADCAST_STATUS).apply {
             putExtra(EXTRA_IS_RUNNING, isRunning)
             putExtra(EXTRA_IP_ADDRESS, getLocalIpAddress())
@@ -280,6 +288,10 @@ class PhoneBridgeService : Service() {
             putExtra(EXTRA_STORAGE_TOTAL, storageRoot.totalSpace)
             putExtra(EXTRA_STORAGE_USED, storageRoot.totalSpace - storageRoot.freeSpace)
             putExtra(EXTRA_STORAGE_FREE, storageRoot.freeSpace)
+
+            // Remote access
+            putExtra(EXTRA_TAILSCALE_IP, tailscaleIp ?: "")
+            putExtra(EXTRA_IS_REMOTE_AVAILABLE, !tailscaleIp.isNullOrEmpty())
 
             setPackage(packageName)
         }
@@ -409,6 +421,9 @@ class PhoneBridgeService : Service() {
             while (interfaces.hasMoreElements()) {
                 val iface = interfaces.nextElement()
                 if (iface.isLoopback || !iface.isUp) continue
+                // Skip VPN/tunnel interfaces — we want the real LAN IP
+                val name = iface.name.lowercase()
+                if (name.startsWith("tun") || name.startsWith("tailscale") || name.startsWith("wg")) continue
 
                 val addresses = iface.inetAddresses
                 while (addresses.hasMoreElements()) {
@@ -422,5 +437,50 @@ class PhoneBridgeService : Service() {
             Log.e(TAG, "Error getting IP address", e)
         }
         return "0.0.0.0"
+    }
+
+    /**
+     * Detect the Tailscale VPN IP address (100.x.y.z) if Tailscale is active.
+     *
+     * Scans network interfaces for tun/tailscale interfaces and checks
+     * if the address falls within Tailscale's CGNAT range (100.64.0.0/10).
+     * Works with any VPN that uses the 100.x.y.z range.
+     *
+     * @return The Tailscale IP address, or null if not detected
+     */
+    private fun getTailscaleIpAddress(): String? {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (!iface.isUp) continue
+
+                val name = iface.name.lowercase()
+                // Look for VPN/tunnel interfaces
+                if (!(name.startsWith("tun") || name.startsWith("tailscale") || name.startsWith("wg"))) continue
+
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (addr is Inet4Address) {
+                        val ip = addr.hostAddress ?: continue
+                        // Tailscale uses 100.64.0.0/10 (CGNAT range)
+                        // This covers 100.64.0.0 – 100.127.255.255
+                        val parts = ip.split(".")
+                        if (parts.size == 4) {
+                            val first = parts[0].toIntOrNull() ?: continue
+                            val second = parts[1].toIntOrNull() ?: continue
+                            if (first == 100 && second in 64..127) {
+                                Log.i(TAG, "🌐 Tailscale IP detected: $ip (interface: ${iface.name})")
+                                return ip
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Error scanning for Tailscale IP: ${e.message}")
+        }
+        return null
     }
 }

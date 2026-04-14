@@ -15,10 +15,11 @@ import threading
 from . import __version__, __app_name__
 from .utils import setup_logging, check_rclone, check_winfsp
 from .config import ConfigManager
-from .discovery import PhoneScanner
+from .discovery import PhoneScanner, DiscoveredPhone
 from .mounter import MountManager
 from .tray import TrayIcon
 from .gui import PhoneBridgeApp
+from .tailscale import TailscaleScanner, is_tailscale_installed
 
 
 # ─── Single Instance Lock ────────────────────────────────────────────
@@ -146,20 +147,37 @@ def main():
         scanner._on_found = lambda phone: logger.info(f"📱 Found: {phone}")
         scanner._on_lost = lambda did: logger.info(f"📱 Lost: {did}")
         scanner.start()
+
+        # Start Tailscale scanner alongside mDNS
+        ts_scanner = TailscaleScanner(
+            on_found=lambda phone: logger.info(f"🌐 Tailscale found: {phone}"),
+            on_lost=lambda did: logger.info(f"🌐 Tailscale lost: {did}"),
+        )
+        ts_scanner.start()
+
         try:
             import time
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             scanner.stop()
+            ts_scanner.stop()
     elif args.no_gui:
         # Tray-only
         tray = TrayIcon(scanner, mounter, config)
+
+        # Tailscale scanner feeds into tray's discovered list
+        ts_scanner = _create_tailscale_scanner(tray, scanner, logger)
+
+        # Restore manual connections from config
+        _restore_manual_phones(config, scanner, logger)
+
         try:
             tray.start()
         except KeyboardInterrupt:
             pass
         finally:
+            ts_scanner.stop()
             tray.stop()
             _release_single_instance()
     else:
@@ -175,18 +193,78 @@ def main():
         scanner.start()
         mounter.start_health_monitor()
 
+        # Start Tailscale scanner 
+        ts_scanner = _create_tailscale_scanner(tray, scanner, logger)
+
+        # Restore manual connections from config
+        _restore_manual_phones(config, scanner, logger)
+
         try:
             # Run GUI on main thread (tkinter requirement)
             app.mainloop()
         except KeyboardInterrupt:
             pass
         finally:
+            ts_scanner.stop()
             tray.stop()
             mounter.unmount_all()
             mounter.stop_health_monitor()
             scanner.stop()
             _release_single_instance()
             logger.info("PhoneBridge stopped.")
+
+
+def _create_tailscale_scanner(tray, scanner, logger) -> TailscaleScanner:
+    """
+    Create and start a Tailscale scanner that feeds discovered phones 
+    into both the mDNS scanner's phone list and the tray's discovered dict.
+    """
+    def on_ts_found(phone):
+        """When a Tailscale peer is found, inject it into the phone list."""
+        with scanner._lock:
+            # Don't overwrite mDNS-discovered entries
+            if phone.device_id not in scanner._phones:
+                scanner._phones[phone.device_id] = phone
+        # Trigger tray's found callback
+        tray._on_phone_found(phone)
+
+    def on_ts_lost(device_id):
+        """When a Tailscale peer is lost."""
+        with scanner._lock:
+            scanner._phones.pop(device_id, None)
+        tray._on_phone_lost(device_id)
+
+    ts_scanner = TailscaleScanner(
+        on_found=on_ts_found,
+        on_lost=on_ts_lost,
+    )
+    ts_scanner.start()
+
+    if is_tailscale_installed():
+        logger.info("🌐 Tailscale auto-discovery enabled")
+    else:
+        logger.info("Tailscale CLI not found — auto-discovery disabled")
+
+    return ts_scanner
+
+
+def _restore_manual_phones(config, scanner, logger):
+    """
+    Restore manually connected phones from saved config so they appear 
+    in the phone list on startup (they won't be discovered via mDNS).
+    """
+    for device_id, phone_config in config.get_all_phones().items():
+        if phone_config.connection_type == "manual" and phone_config.last_ip:
+            phone = DiscoveredPhone.create_manual(
+                ip_address=phone_config.last_ip,
+                port=phone_config.last_port,
+                protocol=phone_config.protocol,
+                display_name=phone_config.display_name,
+            )
+            with scanner._lock:
+                if phone.device_id not in scanner._phones:
+                    scanner._phones[phone.device_id] = phone
+                    logger.info(f"Restored manual connection: {phone.display_name} ({phone_config.last_ip}:{phone_config.last_port})")
 
 
 if __name__ == "__main__":

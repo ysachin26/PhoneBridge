@@ -312,6 +312,143 @@ class PasswordDialog(ctk.CTkToplevel):
         self.entry.select_range(0, "end")
 
 
+class ManualConnectDialog(ctk.CTkToplevel):
+    """Dialog for manually connecting to a phone by IP address."""
+
+    def __init__(self, master, on_connect):
+        super().__init__(master)
+        self.title("Connect Manually")
+        self.geometry("440x360")
+        self.resizable(False, False)
+        self.configure(fg_color=COLOR_BG)
+        self._on_connect = on_connect
+
+        self.transient(master)
+        self.grab_set()
+
+        # Title
+        ctk.CTkLabel(
+            self, text="🌐  Connect by IP Address",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(padx=24, pady=(24, 4), anchor="w")
+
+        ctk.CTkLabel(
+            self,
+            text="Connect to a phone on any network (e.g., via Tailscale VPN)",
+            font=ctk.CTkFont(size=12),
+            text_color=COLOR_TEXT_SEC,
+        ).pack(padx=24, pady=(0, 16), anchor="w")
+
+        # Address field
+        ctk.CTkLabel(
+            self, text="Address",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(padx=24, anchor="w")
+        self.address_entry = ctk.CTkEntry(
+            self, placeholder_text="IP or hostname (e.g., 100.64.0.2)",
+            font=ctk.CTkFont(size=14), height=38,
+        )
+        self.address_entry.pack(padx=24, fill="x", pady=(4, 12))
+        self.address_entry.focus()
+
+        # Port + Protocol row
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=24, pady=(0, 12))
+
+        # Port
+        port_frame = ctk.CTkFrame(row, fg_color="transparent")
+        port_frame.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkLabel(port_frame, text="Port",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=COLOR_TEXT).pack(anchor="w")
+        self.port_entry = ctk.CTkEntry(
+            port_frame, placeholder_text="8273",
+            font=ctk.CTkFont(size=14), height=38,
+        )
+        self.port_entry.insert(0, "8273")
+        self.port_entry.pack(fill="x", pady=(4, 0))
+
+        # Protocol
+        proto_frame = ctk.CTkFrame(row, fg_color="transparent")
+        proto_frame.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        ctk.CTkLabel(proto_frame, text="Protocol",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=COLOR_TEXT).pack(anchor="w")
+        self.protocol_menu = ctk.CTkOptionMenu(
+            proto_frame, values=["https", "http"],
+            height=38, font=ctk.CTkFont(size=14),
+        )
+        self.protocol_menu.set("https")
+        self.protocol_menu.pack(fill="x", pady=(4, 0))
+
+        # Password
+        ctk.CTkLabel(
+            self, text="Connection Code",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(padx=24, anchor="w")
+        self.password_entry = ctk.CTkEntry(
+            self, placeholder_text="Code from your phone",
+            font=ctk.CTkFont(size=14), height=38,
+        )
+        self.password_entry.pack(padx=24, fill="x", pady=(4, 8))
+        self.password_entry.bind("<Return>", lambda e: self._submit())
+
+        # Error label
+        self.error_label = ctk.CTkLabel(
+            self, text="", font=ctk.CTkFont(size=12),
+            text_color=COLOR_RED,
+        )
+        self.error_label.pack(padx=24, anchor="w")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=(8, 24))
+
+        ctk.CTkButton(
+            btn_frame, text="Cancel", width=100,
+            fg_color="transparent", hover_color="#30363d",
+            border_color=COLOR_CARD_BORDER, border_width=1,
+            command=self.destroy,
+        ).pack(side="right", padx=(8, 0))
+
+        self.connect_btn = ctk.CTkButton(
+            btn_frame, text="Connect", width=100,
+            fg_color=COLOR_ACCENT, hover_color="#818cf8",
+            command=self._submit,
+        )
+        self.connect_btn.pack(side="right")
+
+    def _submit(self):
+        address = self.address_entry.get().strip()
+        port_str = self.port_entry.get().strip()
+        protocol = self.protocol_menu.get()
+        password = self.password_entry.get().strip()
+
+        if not address:
+            self.show_error("Enter an IP address or hostname")
+            return
+        try:
+            port = int(port_str) if port_str else 8273
+            if port < 1 or port > 65535:
+                raise ValueError()
+        except ValueError:
+            self.show_error("Invalid port number")
+            return
+        if not password:
+            self.show_error("Enter the connection code from your phone")
+            return
+
+        self.connect_btn.configure(state="disabled", text="Connecting...")
+        self._on_connect(address, port, protocol, password, self)
+
+    def show_error(self, msg):
+        self.error_label.configure(text=msg)
+        self.connect_btn.configure(state="normal", text="Connect")
+
+
 class PhoneBridgeApp(ctk.CTk):
     """Main application window."""
 
@@ -361,6 +498,15 @@ class PhoneBridgeApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
             command=self._open_settings,
         ).pack(side="right", padx=(0, 12))
+
+        # Connect Manually button
+        ctk.CTkButton(
+            header, text="🌐 Connect", width=100,
+            fg_color="transparent", hover_color="#30363d",
+            border_color=COLOR_CARD_BORDER, border_width=1,
+            font=ctk.CTkFont(size=12),
+            command=self._open_manual_connect,
+        ).pack(side="right", padx=(0, 8))
 
         # Rescan button
         ctk.CTkButton(
@@ -828,6 +974,74 @@ class PhoneBridgeApp(ctk.CTk):
     def _rescan(self):
         self.scanner.stop()
         self.scanner.start()
+
+    # ─── Manual Connect ────────────────────────────────────────
+
+    def _open_manual_connect(self):
+        """Open the manual connection dialog."""
+        ManualConnectDialog(self, on_connect=self._handle_manual_connect)
+
+    def _handle_manual_connect(self, address, port, protocol, password, dialog):
+        """Validate and connect to a manually specified phone."""
+        def do_connect():
+            try:
+                phone = DiscoveredPhone.create_manual(
+                    ip_address=address,
+                    port=port,
+                    protocol=protocol,
+                )
+
+                # Verify connection by calling the status endpoint
+                url = f"{phone.webdav_url}/phonebridge/status"
+                req = urllib.request.Request(url, method="GET")
+                import base64
+                creds = base64.b64encode(f"phonebridge:{password}".encode()).decode()
+                req.add_header("Authorization", f"Basic {creds}")
+
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+
+                with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                    data = json.loads(resp.read().decode())
+
+                # Update display name from status if available
+                device_name = data.get("device_name", f"Phone ({address})")
+                if device_name and device_name != f"Phone ({address})":
+                    phone.display_name = device_name
+
+                # Add to scanner's phone list so it appears in the UI
+                with self.scanner._lock:
+                    self.scanner._phones[phone.device_id] = phone
+
+                # Close dialog and mount
+                self.after(0, dialog.destroy)
+                self._do_mount(phone, "phonebridge", password)
+
+                # Save config as manual connection
+                self.config.upsert_phone(PhoneConfig(
+                    device_id=phone.device_id,
+                    display_name=phone.display_name,
+                    last_ip=address,
+                    last_port=port,
+                    auth_user="phonebridge",
+                    auth_password=password,
+                    connection_type="manual",
+                    protocol=protocol,
+                ))
+
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    self.after(0, lambda: dialog.show_error("Incorrect connection code"))
+                else:
+                    self.after(0, lambda: dialog.show_error(f"Server error: HTTP {e.code}"))
+            except urllib.error.URLError as e:
+                self.after(0, lambda: dialog.show_error(
+                    f"Could not reach {protocol}://{address}:{port}\nCheck the address and make sure PhoneBridge is running."))
+            except Exception as e:
+                self.after(0, lambda: dialog.show_error(f"Connection failed: {e}"))
+
+        threading.Thread(target=do_connect, daemon=True).start()
 
     # ─── Utility ──────────────────────────────────────────────
 

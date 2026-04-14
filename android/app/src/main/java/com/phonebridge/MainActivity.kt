@@ -57,10 +57,13 @@ class MainActivity : AppCompatActivity() {
                 val uptimeSeconds = intent.getLongExtra(PhoneBridgeService.EXTRA_UPTIME_SECONDS, 0)
                 val storageTotal = intent.getLongExtra(PhoneBridgeService.EXTRA_STORAGE_TOTAL, 0)
                 val storageUsed = intent.getLongExtra(PhoneBridgeService.EXTRA_STORAGE_USED, 0)
+                val tailscaleIp = intent.getStringExtra(PhoneBridgeService.EXTRA_TAILSCALE_IP) ?: ""
+                val isRemoteAvailable = intent.getBooleanExtra(PhoneBridgeService.EXTRA_IS_REMOTE_AVAILABLE, false)
 
                 updateUI(running, ip, port, password, protocol)
                 updateStats(bytesServed, bytesReceived, totalRequests, activeConnections, uptimeSeconds)
                 updateStorage(storageTotal, storageUsed)
+                updateRemoteAccess(running, tailscaleIp, isRemoteAvailable, port)
             }
         }
     }
@@ -75,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         setupCopyPassword()
         setupAutoStartToggle()
         setupFolderChips()
+        setupRemoteAccess()
         checkPermissions()
     }
 
@@ -271,6 +275,57 @@ class MainActivity : AppCompatActivity() {
             binding.tvStoragePercent.text = "$pct%"
             binding.tvStorageUsed.text = "Used: ${formatBytes(used)}"
             binding.tvStorageTotal.text = "Total: ${formatBytes(total)}"
+        }
+    }
+
+    // ─── Remote Access ─────────────────────────────────────
+
+    private fun setupRemoteAccess() {
+        // Copy Tailscale IP button
+        binding.btnCopyTailscaleIp.setOnClickListener {
+            val ip = binding.tvTailscaleIp.text.toString()
+            if (ip.isNotBlank()) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("PhoneBridge Remote Address", ip))
+                Toast.makeText(this, "Remote address copied", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Get Tailscale button → Play Store
+        binding.btnGetTailscale.setOnClickListener {
+            try {
+                // Try Play Store app first
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.tailscale.ipn")))
+            } catch (_: Exception) {
+                // Fall back to Play Store website
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.tailscale.ipn")))
+            }
+        }
+    }
+
+    private fun updateRemoteAccess(running: Boolean, tailscaleIp: String, isRemoteAvailable: Boolean, port: Int) {
+        runOnUiThread {
+            if (!running) {
+                binding.cardRemoteAccess.visibility = View.GONE
+                return@runOnUiThread
+            }
+
+            binding.cardRemoteAccess.visibility = View.VISIBLE
+
+            if (isRemoteAvailable && tailscaleIp.isNotEmpty()) {
+                // Tailscale is active — show the IP
+                binding.layoutTailscaleAvailable.visibility = View.VISIBLE
+                binding.layoutTailscaleNotInstalled.visibility = View.GONE
+                binding.tvTailscaleIp.text = "$tailscaleIp:$port"
+                binding.tvRemoteStatus.text = "● Available"
+                binding.tvRemoteStatus.setTextColor(ContextCompat.getColor(this, R.color.active_green))
+            } else {
+                // Tailscale not detected — show install prompt
+                binding.layoutTailscaleAvailable.visibility = View.GONE
+                binding.layoutTailscaleNotInstalled.visibility = View.VISIBLE
+                binding.tvRemoteStatus.text = "● Not configured"
+                binding.tvRemoteStatus.setTextColor(ContextCompat.getColor(this, R.color.text_muted))
+            }
         }
     }
 

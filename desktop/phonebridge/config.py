@@ -28,6 +28,8 @@ class PhoneConfig:
     color: str = "#4CAF50"      # Color tag for UI (green default)
     auth_user: str = "phonebridge"  # Basic Auth username
     auth_password: str = ""     # Basic Auth password (saved for auto-remount)
+    connection_type: str = "auto"   # "auto" for mDNS discovery, "manual" for direct IP
+    protocol: str = "https"     # Protocol for manual connections ("http" or "https")
 
     def to_dict(self) -> dict:
         return asdict(self)
