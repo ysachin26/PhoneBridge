@@ -30,6 +30,8 @@ class PhoneConfig:
     auth_password: str = ""     # Basic Auth password (saved for auto-remount)
     connection_type: str = "auto"   # "auto" for mDNS discovery, "manual" for direct IP
     protocol: str = "https"     # Protocol for manual connections ("http" or "https")
+    mount_path: str = ""        # Subfolder path to mount (empty = root, e.g., "DCIM")
+    cert_fingerprint: str = ""  # SHA-256 fingerprint of server cert (TOFU pinning)
 
     def to_dict(self) -> dict:
         return asdict(self)

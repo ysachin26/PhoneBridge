@@ -29,8 +29,8 @@ PHONEBRIDGE_PORT = 8273
 # How often to scan tailnet peers (seconds)
 SCAN_INTERVAL = 30
 
-# Timeout for probing each peer (seconds)
-PROBE_TIMEOUT = 3
+# Timeout for probing each peer (seconds) — Tailscale DERP relay can be slow
+PROBE_TIMEOUT = 10
 
 # Cached path to the tailscale CLI binary
 _tailscale_path: Optional[str] = None

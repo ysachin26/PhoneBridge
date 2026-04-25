@@ -148,4 +148,35 @@ object TlsHelper {
 
         return keyStore
     }
+
+    /**
+     * Get the SHA-256 fingerprint of the server's TLS certificate.
+     *
+     * This fingerprint can be used by the desktop client for Trust-On-First-Use
+     * (TOFU) certificate pinning — verifying the server identity on subsequent
+     * connections without a CA chain.
+     *
+     * @param context Application context for accessing the keystore
+     * @return Hex-encoded SHA-256 fingerprint string (e.g., "AB:CD:EF:...")
+     *         or null if the certificate is not available
+     */
+    fun getCertificateFingerprint(context: Context): String? {
+        return try {
+            val keystoreFile = File(context.filesDir, ServerConfig.KEYSTORE_FILENAME)
+            if (!keystoreFile.exists()) return null
+
+            val keyStore = KeyStore.getInstance("PKCS12")
+            FileInputStream(keystoreFile).use { fis ->
+                keyStore.load(fis, KEYSTORE_PASSWORD.toCharArray())
+            }
+
+            val cert = keyStore.getCertificate(ServerConfig.KEYSTORE_ALIAS) ?: return null
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(cert.encoded)
+            hash.joinToString(":") { "%02X".format(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get certificate fingerprint: ${e.message}")
+            null
+        }
+    }
 }

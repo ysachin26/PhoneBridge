@@ -603,7 +603,7 @@ if ($result) { Write-Output $result } else { Write-Output "" }
         ctx.verify_mode = ssl.CERT_NONE
 
         try:
-            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
                 data = json.loads(resp.read().decode())
                 logger.info(f"Manual connect verified: {ip}:{port}")
         except urllib.error.HTTPError as e:

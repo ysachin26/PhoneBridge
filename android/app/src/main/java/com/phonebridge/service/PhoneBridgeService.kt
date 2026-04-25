@@ -146,6 +146,10 @@ class PhoneBridgeService : Service() {
                 protocol = "http"
             }
 
+            // Set device info and cert fingerprint on the server
+            webDavServer?.deviceName = getDeviceName()
+            webDavServer?.certFingerprint = TlsHelper.getCertificateFingerprint(applicationContext)
+
             webDavServer?.start()
 
             // Start mDNS advertiser with auth and protocol info

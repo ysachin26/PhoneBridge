@@ -23,9 +23,22 @@ from .discovery import PhoneScanner, DiscoveredPhone
 from .mounter import MountManager, MountInfo, MountError, AuthError
 from .startup import is_startup_enabled, enable_startup, disable_startup
 from .utils import check_rclone, check_winfsp, format_size
+from .certpin import get_server_fingerprint, verify_fingerprint, fingerprint_changed
 from . import __version__
 
 logger = logging.getLogger("phonebridge.gui")
+
+# ─── Constants ─────────────────────────────────────────────
+
+MOUNT_FOLDER_OPTIONS = [
+    ("All Storage", ""),
+    ("DCIM (Camera)", "DCIM"),
+    ("Downloads", "Download"),
+    ("Pictures", "Pictures"),
+    ("Music", "Music"),
+    ("Movies", "Movies"),
+    ("Documents", "Documents"),
+]
 
 # ─── Theme ─────────────────────────────────────────────────
 
@@ -111,6 +124,25 @@ class DeviceCard(ctk.CTkFrame):
         )
         badge.pack(side="right")
 
+        # Connection type badge
+        conn_type = getattr(self.phone, 'connection_type', 'auto')
+        if conn_type != "auto":
+            conn_colors = {
+                "manual": ("#f59e0b", "#2a2008"),   # Orange
+                "tailscale": ("#3b82f6", "#0f1d3a"),  # Blue
+            }
+            clr, bg = conn_colors.get(conn_type, (COLOR_TEXT_SEC, COLOR_CARD))
+            ctk.CTkLabel(
+                top_frame,
+                text=conn_type.capitalize(),
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=clr,
+                fg_color=bg,
+                corner_radius=8,
+                padx=8,
+                pady=2,
+            ).pack(side="right", padx=(0, 6))
+
         # ─── Details Row ──────────────────────────────────
         details_frame = ctk.CTkFrame(self, fg_color="transparent")
         details_frame.pack(fill="x", padx=pad, pady=(0, 8))
@@ -124,6 +156,12 @@ class DeviceCard(ctk.CTkFrame):
             details.append(self.phone.device_model)
         if is_mounted:
             details.append(f"Drive {self.mount_info.drive_letter}")
+        # Connection type indicator for non-LAN connections
+        conn_type = getattr(self.phone, 'connection_type', 'auto')
+        if conn_type == "manual":
+            details.append("Manual")
+        elif conn_type == "tailscale":
+            details.append("Tailscale")
 
         detail_text = "  |  ".join(details)
         detail_label = ctk.CTkLabel(
@@ -159,6 +197,44 @@ class DeviceCard(ctk.CTkFrame):
                 font=ctk.CTkFont(size=11),
                 text_color=COLOR_TEXT_SEC,
             ).pack(side="left")
+
+        # ─── Live Transfer Stats (for mounted cards) ──────
+        if is_mounted and self._phone_status:
+            stats_frame = ctk.CTkFrame(self, fg_color="transparent")
+            stats_frame.pack(fill="x", padx=pad, pady=(0, 6))
+
+            uptime_s = self._phone_status.get("uptime_seconds", 0)
+            uptime_min = int(uptime_s / 60)
+            uptime_text = f"{uptime_min}m" if uptime_min < 60 else f"{uptime_min // 60}h {uptime_min % 60}m"
+
+            active_conn = self._phone_status.get("active_connections", 0)
+            bytes_served = self._phone_status.get("bytes_served", 0)
+            bytes_received = self._phone_status.get("bytes_received", 0)
+
+            stats_items = [
+                f"⬆ {format_size(bytes_served)}",
+                f"⬇ {format_size(bytes_received)}",
+                f"⏱ {uptime_text}",
+            ]
+            if active_conn > 0:
+                stats_items.append(f"🔄 {active_conn} active")
+
+            ctk.CTkLabel(
+                stats_frame,
+                text="  ·  ".join(stats_items),
+                font=ctk.CTkFont(size=11),
+                text_color="#58a6ff",
+                anchor="w",
+            ).pack(side="left")
+
+            # Show mount path if not root
+            if self.mount_info and self.mount_info.mount_path:
+                ctk.CTkLabel(
+                    stats_frame,
+                    text=f"📁 /{self.mount_info.mount_path}",
+                    font=ctk.CTkFont(size=11),
+                    text_color=COLOR_ORANGE,
+                ).pack(side="right")
 
         # ─── Action Buttons ───────────────────────────────
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -449,6 +525,129 @@ class ManualConnectDialog(ctk.CTkToplevel):
         self.connect_btn.configure(state="normal", text="Connect")
 
 
+class FolderPickerDialog(ctk.CTkToplevel):
+    """Dialog to select which folder to mount."""
+
+    def __init__(self, master, phone_name: str, on_select):
+        super().__init__(master)
+        self.title("Select Folder to Mount")
+        self.geometry("380x400")
+        self.resizable(False, False)
+        self.configure(fg_color=COLOR_BG)
+        self._on_select = on_select
+        self.result = ""
+
+        self.transient(master)
+        self.grab_set()
+
+        ctk.CTkLabel(
+            self, text="📂  Choose Mount Folder",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(padx=24, pady=(24, 4), anchor="w")
+
+        ctk.CTkLabel(
+            self,
+            text=f"Which folder from {phone_name} to mount?",
+            font=ctk.CTkFont(size=12),
+            text_color=COLOR_TEXT_SEC,
+        ).pack(padx=24, pady=(0, 16), anchor="w")
+
+        self._selected = ctk.StringVar(value="")
+
+        for label, path in MOUNT_FOLDER_OPTIONS:
+            btn = ctk.CTkRadioButton(
+                self, text=label, variable=self._selected, value=path,
+                font=ctk.CTkFont(size=14),
+                text_color=COLOR_TEXT,
+                radiobutton_width=18, radiobutton_height=18,
+            )
+            btn.pack(padx=32, pady=4, anchor="w")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=(16, 24))
+
+        ctk.CTkButton(
+            btn_frame, text="Cancel", width=100,
+            fg_color="transparent", hover_color="#30363d",
+            border_color=COLOR_CARD_BORDER, border_width=1,
+            command=self.destroy,
+        ).pack(side="right", padx=(8, 0))
+
+        ctk.CTkButton(
+            btn_frame, text="Mount", width=100,
+            fg_color=COLOR_ACCENT, hover_color="#818cf8",
+            command=self._submit,
+        ).pack(side="right")
+
+    def _submit(self):
+        self.result = self._selected.get()
+        self._on_select(self.result)
+        self.destroy()
+
+
+class CertWarningDialog(ctk.CTkToplevel):
+    """Warning dialog when a server's certificate fingerprint changes."""
+
+    def __init__(self, master, phone_name: str, old_fp: str, new_fp: str, on_accept, on_reject):
+        super().__init__(master)
+        self.title("Certificate Changed")
+        self.geometry("500x300")
+        self.resizable(False, False)
+        self.configure(fg_color=COLOR_BG)
+
+        self.transient(master)
+        self.grab_set()
+
+        ctk.CTkLabel(
+            self, text="⚠️  Server Certificate Changed",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=COLOR_ORANGE,
+        ).pack(padx=24, pady=(24, 4), anchor="w")
+
+        ctk.CTkLabel(
+            self,
+            text=(f"The TLS certificate for {phone_name} has changed.\n"
+                  f"This could mean the phone was reset or the certificate\n"
+                  f"was regenerated. It could also indicate a security issue."),
+            font=ctk.CTkFont(size=12),
+            text_color=COLOR_TEXT_SEC,
+            justify="left",
+            wraplength=450,
+        ).pack(padx=24, pady=(4, 12), anchor="w")
+
+        # Fingerprint comparison
+        fp_frame = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=8)
+        fp_frame.pack(fill="x", padx=24, pady=(0, 12))
+
+        for label, fp in [("Previously saved:", old_fp), ("Current server:", new_fp)]:
+            ctk.CTkLabel(fp_frame, text=label,
+                         font=ctk.CTkFont(size=10, weight="bold"),
+                         text_color=COLOR_TEXT_SEC).pack(padx=12, pady=(6, 0), anchor="w")
+            # Show first 24 chars of fingerprint for readability
+            display_fp = fp[:23] + "..." if len(fp) > 23 else fp
+            ctk.CTkLabel(fp_frame, text=display_fp,
+                         font=ctk.CTkFont(family="Consolas", size=10),
+                         text_color=COLOR_TEXT).pack(padx=12, pady=(0, 6), anchor="w")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=24, pady=(0, 24))
+
+        ctk.CTkButton(
+            btn_frame, text="Reject", width=100,
+            fg_color=COLOR_RED, hover_color="#da3633",
+            command=lambda: (on_reject(), self.destroy()),
+        ).pack(side="right", padx=(8, 0))
+
+        ctk.CTkButton(
+            btn_frame, text="Accept & Continue", width=160,
+            fg_color=COLOR_ACCENT, hover_color="#818cf8",
+            command=lambda: (on_accept(), self.destroy()),
+        ).pack(side="right")
+
+
 class PhoneBridgeApp(ctk.CTk):
     """Main application window."""
 
@@ -477,6 +676,10 @@ class PhoneBridgeApp(ctk.CTk):
         header = ctk.CTkFrame(self, fg_color="#010409", height=56, corner_radius=0)
         header.pack(fill="x")
         header.pack_propagate(False)
+
+        # Header accent line
+        accent_line = ctk.CTkFrame(self, fg_color=COLOR_ACCENT, height=2, corner_radius=0)
+        accent_line.pack(fill="x")
 
         ctk.CTkLabel(
             header, text="📱  PhoneBridge",
@@ -594,6 +797,24 @@ class PhoneBridgeApp(ctk.CTk):
 
         self.empty_frame.pack(fill="both", expand=True)
 
+        # ─── Footer Bar ───────────────────────────────────
+        self._footer = ctk.CTkFrame(self, fg_color="#010409", height=28, corner_radius=0)
+        self._footer.pack(fill="x", side="bottom")
+        self._footer.pack_propagate(False)
+
+        rclone_path = check_rclone()
+        rclone_text = "rclone ✓" if rclone_path else "rclone ✗"
+        from .tailscale import is_tailscale_installed
+        ts_text = "Tailscale ✓" if is_tailscale_installed() else "Tailscale ✗"
+        winfsp_text = "WinFsp ✓" if (check_winfsp() if sys.platform == "win32" else True) else "WinFsp ✗"
+
+        ctk.CTkLabel(
+            self._footer,
+            text=f"v{__version__}  ·  {rclone_text}  ·  {winfsp_text}  ·  {ts_text}",
+            font=ctk.CTkFont(size=10),
+            text_color="#484f58",
+        ).pack(side="left", padx=16)
+
     def _check_deps(self):
         rclone_ok = bool(check_rclone())
         winfsp_ok = check_winfsp() if sys.platform == "win32" else True
@@ -615,9 +836,9 @@ class PhoneBridgeApp(ctk.CTk):
     def _start_polling(self):
         """Poll for device changes every 2 seconds."""
         self._refresh_devices()
-        # Fetch phone statuses in background every 10 seconds
+        # Fetch phone statuses in background every 6 seconds for live stats
         self._poll_count = getattr(self, '_poll_count', 0) + 1
-        if self._poll_count % 5 == 1:  # Every 10 seconds (5 * 2s)
+        if self._poll_count % 3 == 1:  # Every 6 seconds (3 * 2s)
             threading.Thread(target=self._fetch_phone_statuses, daemon=True).start()
         self.after(2000, self._start_polling)
 
@@ -751,7 +972,7 @@ class PhoneBridgeApp(ctk.CTk):
 
         threading.Thread(target=do_verify, daemon=True).start()
 
-    def _do_mount(self, phone, auth_user, password):
+    def _do_mount(self, phone, auth_user, password, mount_path=""):
         """Actually perform the mount (runs in background thread)."""
         try:
             phone_config = self.config.get_phone(phone.device_id)
@@ -764,13 +985,56 @@ class PhoneBridgeApp(ctk.CTk):
                 self.after(0, lambda: self._show_error("No Drives", "No available drive letters."))
                 return
 
+            # Use saved mount_path from config if not explicitly provided
+            if not mount_path and phone_config and phone_config.mount_path:
+                mount_path = phone_config.mount_path
+
+            # ─── TOFU Certificate Pinning ─────────────────────
+            if phone.protocol == "https":
+                current_fp = get_server_fingerprint(phone.ip_address, phone.port)
+                saved_fp = phone_config.cert_fingerprint if phone_config else ""
+
+                if current_fp:
+                    if saved_fp and fingerprint_changed(saved_fp, current_fp):
+                        # Fingerprint changed — ask user via a blocking event
+                        accepted = threading.Event()
+                        rejected = threading.Event()
+
+                        self.after(0, lambda: CertWarningDialog(
+                            self, phone.display_name, saved_fp, current_fp,
+                            on_accept=accepted.set,
+                            on_reject=rejected.set,
+                        ))
+
+                        # Wait for user decision (up to 60s)
+                        while not accepted.is_set() and not rejected.is_set():
+                            import time
+                            time.sleep(0.1)
+
+                        if rejected.is_set():
+                            logger.warning(f"User rejected certificate change for {phone.display_name}")
+                            self.after(0, lambda: self._show_error(
+                                "Connection Rejected",
+                                "The server certificate has changed and you chose to reject it."
+                            ))
+                            return
+
+                        logger.info(f"User accepted new certificate for {phone.display_name}")
+
             mount_info = self.mounter.mount(
                 phone, drive_letter,
                 auth_user=auth_user,
                 auth_password=password,
+                mount_path=mount_path,
             )
 
-            # Save config
+            # Save config (with cert fingerprint and mount path)
+            save_fp = ""
+            if phone.protocol == "https":
+                fp = get_server_fingerprint(phone.ip_address, phone.port)
+                if fp:
+                    save_fp = fp
+
             self.config.upsert_phone(PhoneConfig(
                 device_id=phone.device_id,
                 display_name=phone.display_name,
@@ -779,10 +1043,13 @@ class PhoneBridgeApp(ctk.CTk):
                 preferred_drive=drive_letter,
                 auth_user=auth_user,
                 auth_password=password,
+                mount_path=mount_path,
+                cert_fingerprint=save_fp,
             ))
 
         except MountError as e:
-            self.after(0, lambda: self._show_error("Mount Failed", str(e)))
+            err_msg = str(e)
+            self.after(0, lambda msg=err_msg: self._show_error("Mount Failed", msg))
 
     def _handle_unmount(self, device_id: str):
         try:
@@ -1056,7 +1323,7 @@ class PhoneBridgeApp(ctk.CTk):
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
 
-                with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
                     data = json.loads(resp.read().decode())
 
                 # Update display name from status if available
@@ -1088,12 +1355,14 @@ class PhoneBridgeApp(ctk.CTk):
                 if e.code == 401:
                     self.after(0, lambda: dialog.show_error("Incorrect connection code"))
                 else:
-                    self.after(0, lambda: dialog.show_error(f"Server error: HTTP {e.code}"))
-            except urllib.error.URLError as e:
+                    code = e.code
+                    self.after(0, lambda c=code: dialog.show_error(f"Server error: HTTP {c}"))
+            except urllib.error.URLError:
                 self.after(0, lambda: dialog.show_error(
                     f"Could not reach {protocol}://{address}:{port}\nCheck the address and make sure PhoneBridge is running."))
             except Exception as e:
-                self.after(0, lambda: dialog.show_error(f"Connection failed: {e}"))
+                err_msg = str(e)
+                self.after(0, lambda msg=err_msg: dialog.show_error(f"Connection failed: {msg}"))
 
         threading.Thread(target=do_connect, daemon=True).start()
 

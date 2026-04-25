@@ -41,6 +41,12 @@ class WebDavServer(
     @Volatile private var authPassword: String
 ) : NanoHTTPD(port) {
 
+    /** Device name shown to desktop clients (set by service). */
+    @Volatile var deviceName: String = android.os.Build.MODEL
+
+    /** Certificate SHA-256 fingerprint (set by service after TLS setup). */
+    @Volatile var certFingerprint: String? = null
+
     companion object {
         private const val TAG = "WebDavServer"
     }
@@ -176,6 +182,7 @@ class WebDavServer(
         val json = """
         {
             "version": "${ServerConfig.VERSION}",
+            "device_name": "${deviceName.replace("\"", "\\\"")}",
             "uptime_seconds": ${stats.uptimeSeconds},
             "bytes_served": ${stats.bytesServed},
             "bytes_received": ${stats.bytesReceived},
@@ -184,7 +191,8 @@ class WebDavServer(
             "storage_total": $totalSpace,
             "storage_used": $usedSpace,
             "storage_free": $freeSpace,
-            "tailscale_ip": ${if (tailscaleIp != null) "\"$tailscaleIp\"" else "null"}
+            "tailscale_ip": ${if (tailscaleIp != null) "\"$tailscaleIp\"" else "null"},
+            "cert_fingerprint": ${if (certFingerprint != null) "\"$certFingerprint\"" else "null"}
         }
         """.trimIndent()
 

@@ -43,6 +43,7 @@ class MountInfo:
     process: Optional[subprocess.Popen] = field(default=None, repr=False)
     mounted_at: float = 0.0
     error: str = ""
+    mount_path: str = ""  # Subfolder path (empty = root)
 
     @property
     def is_alive(self) -> bool:
@@ -129,12 +130,15 @@ class MountManager:
         lower = error_text.lower()
         return any(marker in lower for marker in AUTH_ERROR_MARKERS)
 
-    def check_auth(self, webdav_url: str, user: str, password: str) -> bool:
+    def check_auth(self, webdav_url: str, user: str, password: str, timeout: float = 10.0) -> bool:
         """
         Probe the WebDAV server to verify credentials before mounting.
         
         Returns True if auth succeeds, raises AuthError if 401,
         raises MountError for other connection failures.
+        
+        Args:
+            timeout: Connection timeout in seconds. Use higher values for remote/VPN.
         """
         try:
             # Build an OPTIONS request (lightweight, doesn't transfer data)
@@ -148,7 +152,7 @@ class MountManager:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
 
-            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
                 logger.debug(f"Auth check passed (HTTP {resp.status})")
                 return True
         except urllib.error.HTTPError as e:
@@ -163,17 +167,20 @@ class MountManager:
         except Exception as e:
             raise MountError(f"Connection check failed: {e}")
 
-    def is_server_reachable(self, webdav_url: str) -> bool:
+    def is_server_reachable(self, webdav_url: str, timeout: float = 8.0) -> bool:
         """
         Quick check if the WebDAV server is actually running and reachable.
         Returns True if server responds, False otherwise.
+        
+        Args:
+            timeout: Connection timeout in seconds. Use higher values for remote/VPN.
         """
         try:
             req = urllib.request.Request(webdav_url, method="OPTIONS")
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            with urllib.request.urlopen(req, timeout=3, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
                 return True
         except urllib.error.HTTPError:
             # Server responded (even if 401) — it's running
@@ -216,6 +223,7 @@ class MountManager:
         drive_letter: str,
         auth_user: str = "",
         auth_password: str = "",
+        mount_path: str = "",
         timeout: float = 10.0,
     ) -> MountInfo:
         """
@@ -226,6 +234,7 @@ class MountManager:
             drive_letter: Target drive letter (e.g., "E:")
             auth_user: Username for Basic Auth (if required)
             auth_password: Password for Basic Auth (if required)
+            mount_path: Subfolder path to mount (e.g., "DCIM", "Downloads")
             timeout: Seconds to wait for mount to establish
             
         Returns:
@@ -273,6 +282,15 @@ class MountManager:
                 raise MountError(f"Drive letter {drive_letter} is already in use")
 
         logger.info(f"Mounting {phone.display_name} → {drive_letter} ({phone.webdav_url})")
+        if mount_path:
+            logger.info(f"  Subfolder: /{mount_path}")
+
+        # Build the WebDAV URL (with optional subfolder path)
+        webdav_url = phone.webdav_url
+        if mount_path:
+            # Strip leading/trailing slashes and append to URL
+            clean_path = mount_path.strip("/")
+            webdav_url = f"{webdav_url}/{clean_path}"
 
         # Build rclone command
         cmd = [
@@ -280,7 +298,7 @@ class MountManager:
             "mount",
             f":webdav:",
             drive_letter,
-            f"--webdav-url={phone.webdav_url}",
+            f"--webdav-url={webdav_url}",
             f"--vfs-cache-mode={self._vfs_cache_mode}",
             f"--vfs-cache-max-age={self._vfs_cache_max_age}",
             f"--vfs-read-chunk-size={self._vfs_read_chunk_size}",
@@ -330,6 +348,7 @@ class MountManager:
                 auth_password=auth_password,
                 process=process,
                 mounted_at=time.time(),
+                mount_path=mount_path,
             )
 
             with self._lock:
